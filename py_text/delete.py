@@ -26,7 +26,7 @@ IMAGE_EXTS = [".jpg", ".png", ".jpeg", ".bmp", ".webp"]
 
 
 def delete_one(label_path: Path, image_dir: Path):
-    """删除 label 及其对应 image"""
+    """删除 label 及其对应 image."""
     stem = label_path.stem  # 不带后缀的文件名
 
     # 删除 label

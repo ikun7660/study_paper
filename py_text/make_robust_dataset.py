@@ -1,15 +1,17 @@
 import os
-import cv2
 import shutil
+
+import cv2
 import numpy as np
 from tqdm import tqdm
 
 # ========= 路径配置（按你自己情况改） =========
 SRC_VALID = r"E:\User\ultralytics-8.3.241\datasets\Knife\valid"
-DST_ROOT  = r"E:\User\ultralytics-8.3.241\datasets\Knife_robust"
+DST_ROOT = r"E:\User\ultralytics-8.3.241\datasets\Knife_robust"
 
 
 IMG_EXTS = (".jpg", ".png", ".jpeg")
+
 
 # ========= 干扰函数 =========
 def add_gaussian_noise(img, std=15):
@@ -17,17 +19,21 @@ def add_gaussian_noise(img, std=15):
     out = img + noise
     return np.clip(out, 0, 255).astype(np.uint8)
 
+
 def add_blur(img, ksize=5):
     return cv2.GaussianBlur(img, (ksize, ksize), 0)
 
+
 def adjust_brightness(img, factor=0.6):
     return np.clip(img * factor, 0, 255).astype(np.uint8)
+
 
 # ========= 创建目录 =========
 def prepare_dirs():
     for name in ["clean", "noise", "blur", "dark"]:
         os.makedirs(os.path.join(DST_ROOT, name, "images"), exist_ok=True)
         os.makedirs(os.path.join(DST_ROOT, name, "labels"), exist_ok=True)
+
 
 def main():
     prepare_dirs()
@@ -67,6 +73,7 @@ def main():
             shutil.copy(label_path, os.path.join(DST_ROOT, name, "labels"))
 
     print("鲁棒性验证集生成完成")
+
 
 if __name__ == "__main__":
     main()

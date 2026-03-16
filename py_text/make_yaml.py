@@ -17,6 +17,7 @@ names:
   0: knife
 """
 
+
 def main():
     for s in SUBSETS:
         subset_dir = os.path.join(ROBUST_ROOT, s)
@@ -31,6 +32,7 @@ def main():
         print(f"Written: {yaml_path}")
 
     print("All data.yaml generated.")
+
 
 if __name__ == "__main__":
     main()

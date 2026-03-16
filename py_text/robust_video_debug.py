@@ -1,8 +1,9 @@
 import os
 import time
+
 import cv2
-import numpy as np
 import pandas as pd
+
 from ultralytics import YOLO
 
 # =========================
@@ -15,39 +16,41 @@ OUT_DIR = r"E:\User\ultralytics-8.3.241\video_eval_out"
 # =========================
 # 规则/阈值（你可以调）
 # =========================
-CONF_TH = 0.70               # 置信度阈值：先用你当前的
-MIN_AREA_RATIO = 0.00        # 最小面积占比（box_area / frame_area），0 就是不限制
-HITS_TO_TRIGGER = 1          # 连续命中多少帧才触发（你当前是 1）
-COOLDOWN_SEC = 0.0           # 触发后冷却秒数（你当前 0）
-IMG_SIZE = 640               # 推理尺寸
-DEVICE = 0                   # 有 GPU 就 0；没有就 "cpu"
-CLASS_ID = None              # 只做 knife 单类可不设；若你想只看某类填 0
+CONF_TH = 0.70  # 置信度阈值：先用你当前的
+MIN_AREA_RATIO = 0.00  # 最小面积占比（box_area / frame_area），0 就是不限制
+HITS_TO_TRIGGER = 1  # 连续命中多少帧才触发（你当前是 1）
+COOLDOWN_SEC = 0.0  # 触发后冷却秒数（你当前 0）
+IMG_SIZE = 640  # 推理尺寸
+DEVICE = 0  # 有 GPU 就 0；没有就 "cpu"
+CLASS_ID = None  # 只做 knife 单类可不设；若你想只看某类填 0
 
 # =========================
 # 可视化开关
 # =========================
-SHOW_WINDOW = True           # 弹窗显示过程
-SAVE_VIDEO = True            # 保存带叠加的视频
-SAVE_CSV = True              # 保存 per_frame / events / summary
-DRAW_ALL_RAW = True          # 画“模型原始输出框”（未过滤）
-DRAW_AFTER_FILTER = True     # 画“过滤后框”（用于规则判断）
-MAX_BOXES_DRAW = 30          # 防止太多框影响显示
+SHOW_WINDOW = True  # 弹窗显示过程
+SAVE_VIDEO = True  # 保存带叠加的视频
+SAVE_CSV = True  # 保存 per_frame / events / summary
+DRAW_ALL_RAW = True  # 画“模型原始输出框”（未过滤）
+DRAW_AFTER_FILTER = True  # 画“过滤后框”（用于规则判断）
+MAX_BOXES_DRAW = 30  # 防止太多框影响显示
 
 # =========================
 # UI 控制
 # =========================
-KEY_PAUSE = ord(' ')         # 空格暂停/继续
-KEY_QUIT = ord('q')          # q 退出
-KEY_STEP = ord('n')          # n 单步（暂停状态下）
-KEY_TOGGLE_RAW = ord('r')    # r 显示/隐藏 raw 框
-KEY_TOGGLE_FIL = ord('f')    # f 显示/隐藏 filter 框
+KEY_PAUSE = ord(" ")  # 空格暂停/继续
+KEY_QUIT = ord("q")  # q 退出
+KEY_STEP = ord("n")  # n 单步（暂停状态下）
+KEY_TOGGLE_RAW = ord("r")  # r 显示/隐藏 raw 框
+KEY_TOGGLE_FIL = ord("f")  # f 显示/隐藏 filter 框
 
 
 def ensure_dir(p):
     os.makedirs(p, exist_ok=True)
 
+
 def box_area_xyxy(x1, y1, x2, y2):
     return max(0.0, x2 - x1) * max(0.0, y2 - y1)
+
 
 def draw_label(img, x, y, text, bg=True):
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -57,6 +60,7 @@ def draw_label(img, x, y, text, bg=True):
     if bg:
         cv2.rectangle(img, (x, y - th - 6), (x + tw + 6, y + 4), (0, 0, 0), -1)
     cv2.putText(img, text, (x + 3, y - 3), font, scale, (255, 255, 255), thick, cv2.LINE_AA)
+
 
 def main():
     ensure_dir(OUT_DIR)
@@ -75,7 +79,9 @@ def main():
 
     # 输出文件
     ts = time.strftime("%Y%m%d_%H%M%S")
-    out_video_path = os.path.join(OUT_DIR, f"debug_{ts}_conf{CONF_TH:.2f}_hits{HITS_TO_TRIGGER}_area{MIN_AREA_RATIO:.2f}_cd{COOLDOWN_SEC:.1f}.mp4")
+    out_video_path = os.path.join(
+        OUT_DIR, f"debug_{ts}_conf{CONF_TH:.2f}_hits{HITS_TO_TRIGGER}_area{MIN_AREA_RATIO:.2f}_cd{COOLDOWN_SEC:.1f}.mp4"
+    )
     out_perframe = os.path.join(OUT_DIR, f"per_frame_{ts}.csv")
     out_events = os.path.join(OUT_DIR, f"events_{ts}.csv")
     out_summary = os.path.join(OUT_DIR, f"summary_{ts}.csv")
@@ -103,7 +109,7 @@ def main():
     show_fil = DRAW_AFTER_FILTER
 
     frame_idx = 0
-    t0 = time.time()
+    time.time()
 
     while True:
         if SHOW_WINDOW and paused and not step_once:
@@ -119,10 +125,10 @@ def main():
             res = model.predict(
                 source=frame,
                 imgsz=IMG_SIZE,
-                conf=0.001,      # 故意放低，让你看到“模型原始输出”到底有没有框
+                conf=0.001,  # 故意放低，让你看到“模型原始输出”到底有没有框
                 iou=0.7,
                 device=DEVICE,
-                verbose=False
+                verbose=False,
             )[0]
             infer_ms = (time.time() - infer_t0) * 1000.0
 
@@ -173,32 +179,36 @@ def main():
                 end_f = frame_idx - 1
                 end_t = (end_f / fps) if fps > 0 else (end_f / 30.0)
                 duration = max(0.0, end_t - event_start_t)
-                events.append({
-                    "event_id": len(events) + 1,
-                    "start_frame": event_start_f,
-                    "end_frame": end_f,
-                    "start_time_s": event_start_t,
-                    "end_time_s": end_t,
-                    "duration_s": duration,
-                })
+                events.append(
+                    {
+                        "event_id": len(events) + 1,
+                        "start_frame": event_start_f,
+                        "end_frame": end_f,
+                        "start_time_s": event_start_t,
+                        "end_time_s": end_t,
+                        "duration_s": duration,
+                    }
+                )
 
             # 取最大置信度（raw / filter）
             best_raw = max([b[4] for b in raw_boxes], default=0.0)
             best_fil = max([b[4] for b in fil_boxes], default=0.0)
 
             # 记录 per-frame
-            per_rows.append({
-                "frame": frame_idx,
-                "time_s": t_sec,
-                "raw_count": len(raw_boxes),
-                "filter_count": len(fil_boxes),
-                "best_raw_conf": best_raw,
-                "best_filter_conf": best_fil,
-                "hits": hits,
-                "triggered": triggered,
-                "in_cooldown": int(in_cooldown),
-                "infer_ms": infer_ms,
-            })
+            per_rows.append(
+                {
+                    "frame": frame_idx,
+                    "time_s": t_sec,
+                    "raw_count": len(raw_boxes),
+                    "filter_count": len(fil_boxes),
+                    "best_raw_conf": best_raw,
+                    "best_filter_conf": best_fil,
+                    "hits": hits,
+                    "triggered": triggered,
+                    "in_cooldown": int(in_cooldown),
+                    "infer_ms": infer_ms,
+                }
+            )
 
             # ====== 画图层：让你肉眼判断“没检测”还是“被阈值过滤” ======
             vis = frame.copy()
@@ -217,8 +227,15 @@ def main():
 
             # 顶部状态条
             draw_label(vis, 10, 25, f"frame {frame_idx}/{total}  t={t_sec:.2f}s  fps={fps:.2f}")
-            draw_label(vis, 10, 50, f"raw={len(raw_boxes)}  filter={len(fil_boxes)}  best_raw={best_raw:.2f}  best_fil={best_fil:.2f}")
-            draw_label(vis, 10, 75, f"CONF_TH={CONF_TH:.2f}  MIN_AREA={MIN_AREA_RATIO:.2f}  HITS={hits}/{HITS_TO_TRIGGER}")
+            draw_label(
+                vis,
+                10,
+                50,
+                f"raw={len(raw_boxes)}  filter={len(fil_boxes)}  best_raw={best_raw:.2f}  best_fil={best_fil:.2f}",
+            )
+            draw_label(
+                vis, 10, 75, f"CONF_TH={CONF_TH:.2f}  MIN_AREA={MIN_AREA_RATIO:.2f}  HITS={hits}/{HITS_TO_TRIGGER}"
+            )
             draw_label(vis, 10, 100, f"triggered={triggered}  cooldown={int(in_cooldown)}  infer={infer_ms:.1f}ms")
 
             if writer is not None:
@@ -247,14 +264,16 @@ def main():
         end_f = frame_idx - 1
         end_t = (end_f / fps) if fps > 0 else (end_f / 30.0)
         duration = max(0.0, end_t - event_start_t)
-        events.append({
-            "event_id": len(events) + 1,
-            "start_frame": event_start_f,
-            "end_frame": end_f,
-            "start_time_s": event_start_t,
-            "end_time_s": end_t,
-            "duration_s": duration,
-        })
+        events.append(
+            {
+                "event_id": len(events) + 1,
+                "start_frame": event_start_f,
+                "end_frame": end_f,
+                "start_time_s": event_start_t,
+                "end_time_s": end_t,
+                "duration_s": duration,
+            }
+        )
 
     cap.release()
     if writer is not None:
