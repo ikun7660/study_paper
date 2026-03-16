@@ -51,8 +51,6 @@ from PyQt5.QtWidgets import (
 class RuleConfig:
     # 规则阈值
     conf_th: float = 0.70          # 置信度阈值（命中阈值）
-    conf_enter: float = 0.80       # 进入候选状态阈值
-    conf_keep: float = 0.65        # 保持候选状态阈值
     hits_required: int = 3         # 命中需要的 hit 数（连续/累计窗口内）
     hit_window_sec: float = 1.0    # 统计窗口（秒）
     min_area_ratio: float = 0.00   # 最小框面积比例（框面积/图像面积），过滤小噪点框
@@ -64,6 +62,11 @@ class RuleConfig:
     raw_conf: float = 0.001        # 模型输出的最低 conf（尽量低，避免你“看不到”潜在命中）
     device: str = "0"              # "0" GPU / "cpu"
     max_det: int = 300
+
+    # 运动辅助判定参数
+    motion_pixel_diff_th: int = 25     # 帧差二值化阈值
+    motion_ratio_th: float = 0.015     # ROI 内判定为“有运动”的最小变化比例
+    static_conf_bonus: float = 0.15    # 静止目标额外提高的置信度门槛
 
     # 提示
     enable_sound: bool = True
@@ -89,9 +92,7 @@ class VideoWorker(QThread):
         # hits 统计：保存最近窗口内的 hit 时间戳
         self.hit_times = deque()
         self.last_trigger_time = 0.0
-
-        self.in_candidate_state = False
-        self.last_best = None
+        self.prev_gray = None
 
     def stop(self):
         self._stop_flag = True
@@ -167,6 +168,7 @@ class VideoWorker(QThread):
             frame_id += 1
             h, w = frame.shape[:2]
             img_area = float(w * h)
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
             # 3) 推理（raw_conf 设低，之后用规则 conf_th 再过滤）
             t_infer0 = time.time()
@@ -189,8 +191,6 @@ class VideoWorker(QThread):
             best = None  # (conf, xyxy, cls)
             raw_count = 0
 
-            curr_conf_th = self.rule.conf_keep if self.in_candidate_state else self.rule.conf_enter
-
             r0 = results[0]
             if r0.boxes is not None and len(r0.boxes) > 0:
                 for b in r0.boxes:
@@ -201,7 +201,7 @@ class VideoWorker(QThread):
                     area_ratio = max(0.0, (x2 - x1) * (y2 - y1)) / img_area
 
                     # 规则过滤：conf + 面积
-                    if conf < curr_conf_th:
+                    if conf < self.rule.conf_th:
                         continue
                     if area_ratio < self.rule.min_area_ratio:
                         continue
@@ -211,22 +211,35 @@ class VideoWorker(QThread):
 
             now = time.time()
 
+            motion_ratio = 1.0
+            motion_ok = True
+
+            if best is not None and self.prev_gray is not None:
+                conf, (x1, y1, x2, y2), cls, area_ratio = best
+
+                xi1 = max(0, min(w - 1, int(x1)))
+                yi1 = max(0, min(h - 1, int(y1)))
+                xi2 = max(0, min(w, int(x2)))
+                yi2 = max(0, min(h, int(y2)))
+
+                if xi2 > xi1 and yi2 > yi1:
+                    curr_roi = gray[yi1:yi2, xi1:xi2]
+                    prev_roi = self.prev_gray[yi1:yi2, xi1:xi2]
+
+                    if curr_roi.size > 0 and prev_roi.size > 0 and curr_roi.shape == prev_roi.shape:
+                        diff = cv2.absdiff(curr_roi, prev_roi)
+                        _, diff_bin = cv2.threshold(diff, self.rule.motion_pixel_diff_th, 255, cv2.THRESH_BINARY)
+                        motion_pixels = cv2.countNonZero(diff_bin)
+                        roi_pixels = diff_bin.shape[0] * diff_bin.shape[1]
+                        motion_ratio = motion_pixels / float(max(1, roi_pixels))
+                        motion_ok = motion_ratio >= self.rule.motion_ratio_th
+
             # 5) 规则判定：本帧是否 hit
             hit_this_frame = 0
-            if not self.in_candidate_state:
-                if best is not None:
-                    self.in_candidate_state = True
-                    self.last_best = best
-                    hit_this_frame = 1
-            else:
-                if best is not None:
-                    self.last_best = best
-                    hit_this_frame = 1
-                else:
-                    self.in_candidate_state = False
-                    self.last_best = None
-                    self.hit_times.clear()
-                    hit_this_frame = 0
+            if best is not None:
+                conf, (x1, y1, x2, y2), cls, area_ratio = best
+                dynamic_conf_th = self.rule.conf_th if motion_ok else min(0.99, self.rule.conf_th + self.rule.static_conf_bonus)
+                hit_this_frame = 1 if conf >= dynamic_conf_th else 0
 
             if hit_this_frame:
                 self._push_hit(now)
@@ -243,14 +256,14 @@ class VideoWorker(QThread):
                 if self.rule.enable_notify:
                     self.notify_signal.emit(
                         "刀具预警",
-                        f"规则命中：enter≥{self.rule.conf_enter:.2f}, keep≥{self.rule.conf_keep:.2f}, hits={hits}/{self.rule.hits_required}, area≥{self.rule.min_area_ratio:.3f}"
+                        f"规则命中：conf≥{self.rule.conf_th:.2f}, hits={hits}/{self.rule.hits_required}, area≥{self.rule.min_area_ratio:.3f}"
                     )
                 self._play_sound_non_block()
 
             # 7) 可视化：只画“命中框”
             vis = frame.copy()
 
-            if best is not None:
+            if best is not None and hit_this_frame:
                 conf, (x1, y1, x2, y2), cls, area_ratio = best
                 x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
 
@@ -266,7 +279,7 @@ class VideoWorker(QThread):
             t_sec = frame_id / fps
             info1 = f"frame {frame_id}  t={t_sec:.2f}s  fps={fps:.1f}  infer={infer_ms:.1f}ms"
             info2 = f"raw_boxes={raw_count}  hit={hit_this_frame}  hits={hits}/{self.rule.hits_required}  trig={triggered}  cd={max(0.0, self.rule.cooldown_sec-(now-self.last_trigger_time)):.1f}s"
-            info3 = f"ENTER={self.rule.conf_enter:.2f}  KEEP={self.rule.conf_keep:.2f}  STATE={'ON' if self.in_candidate_state else 'OFF'}  MIN_AREA={self.rule.min_area_ratio:.3f}  WIN={self.rule.hit_window_sec:.1f}s"
+            info3 = f"CONF_TH={self.rule.conf_th:.2f}  MIN_AREA={self.rule.min_area_ratio:.3f}  WIN={self.rule.hit_window_sec:.1f}s  MOTION={motion_ratio:.3f}"
             y0 = 25
             for s in [info1, info2, info3]:
                 cv2.putText(vis, s, (10, y0), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
@@ -278,6 +291,8 @@ class VideoWorker(QThread):
             qimg = QImage(rgb.data, rgb.shape[1], rgb.shape[0], rgb.strides[0], QImage.Format_RGB888)
             self.frame_signal.emit(qimg.copy())
             self.status_signal.emit(f"运行中：frame={frame_id}, raw={raw_count}, hit={hit_this_frame}, hits={hits}, trig={triggered}")
+
+            self.prev_gray = gray
 
             # 控制一下线程节奏（让 UI 更丝滑）
             self.msleep(1)
@@ -442,9 +457,6 @@ class MainWindow(QWidget):
 
         # 读取 UI 参数 -> rule
         self.rule.conf_th = float(self.conf_th.value())
-        self.rule.conf_enter = self.rule.conf_th
-        if self.rule.conf_keep >= self.rule.conf_enter:
-            self.rule.conf_keep = max(0.0, self.rule.conf_enter - 0.05)
         self.rule.hits_required = int(self.hits_required.value())
         self.rule.hit_window_sec = float(self.hit_window_sec.value())
         self.rule.min_area_ratio = float(self.min_area_ratio.value())
@@ -512,3 +524,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
