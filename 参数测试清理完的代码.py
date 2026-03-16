@@ -1,13 +1,12 @@
 import os
 import time
-from dataclasses import dataclass, asdict
-from typing import List, Dict, Any, Optional, Tuple
+from dataclasses import asdict, dataclass
 
 import cv2
 import numpy as np
 import pandas as pd
-from ultralytics import YOLO
 
+from ultralytics import YOLO
 
 # =========================
 # 你只需要改这里
@@ -133,14 +132,8 @@ def run_one_rule(model, video_path, rule, out_dir):
         t_sec = frame_idx / fps if fps > 0 else float(frame_idx)
 
         t0 = time.time()
-        res = model.predict(
-            frame,
-            imgsz=640,
-            conf=0.001,
-            iou=0.7,
-            verbose=False
-        )
-        infer_time_sum += (time.time() - t0)
+        res = model.predict(frame, imgsz=640, conf=0.001, iou=0.7, verbose=False)
+        infer_time_sum += time.time() - t0
         n_infer += 1
 
         boxes = extract_boxes(res[0], TARGET_CLASS_ID)
@@ -175,11 +168,21 @@ def run_one_rule(model, video_path, rule, out_dir):
             last_trigger_t = t_sec
             hit_count = 0
 
-        frames.append(FrameRecord(
-            rule.name, frame_idx, t_sec, detected, hit_count,
-            triggered, best_conf, best_area_ratio,
-            n_boxes, max_conf_any, mean_conf
-        ))
+        frames.append(
+            FrameRecord(
+                rule.name,
+                frame_idx,
+                t_sec,
+                detected,
+                hit_count,
+                triggered,
+                best_conf,
+                best_area_ratio,
+                n_boxes,
+                max_conf_any,
+                mean_conf,
+            )
+        )
 
     cap.release()
 
@@ -207,7 +210,7 @@ def run_one_rule(model, video_path, rule, out_dir):
         "triggers_per_min": triggers_per_min,
         "detected_ratio": detected_ratio,
         "avg_infer_ms": avg_infer_ms,
-        "effective_fps": eff_fps
+        "effective_fps": eff_fps,
     }
 
     return summary
