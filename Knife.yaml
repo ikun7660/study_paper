@@ -1,7 +1,6 @@
 train: ../datasets/Knife/train/images
 val: ../datasets/Knife/valid/images
 
-
 nc: 1
 
 names:

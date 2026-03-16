@@ -10,15 +10,15 @@
 """
 knife_alarm_gui.py
 成品：YOLO(ultralytics) + 规则判定 + 只显示命中框 + 非阻塞通知(托盘气泡) + 提示音
-支持：摄像头 / 视频文件 二选一
+支持：摄像头 / 视频文件 二选一.
 """
 
 # 标准库：路径/进程参数/时间戳等
 import os
 import sys
 import time
-from dataclasses import dataclass
 from collections import deque
+from dataclasses import dataclass
 
 # OpenCV：读取视频/摄像头，绘制框与文字，颜色空间转换
 import cv2
@@ -36,23 +36,36 @@ DEFAULT_VIDEO_PATH = r"E:\User\ultralytics-8.3.241\video\video_1.mp4"
 # winsound 仅在 Windows 环境可用；失败时禁用提示音
 try:
     import winsound
+
     HAS_WINSOUND = True
 except Exception:
     HAS_WINSOUND = False
 
 # ultralytics
 # Ultralytics YOLO：加载 .pt 权重并进行推理
-from ultralytics import YOLO
-
 # PyQt5
 # PyQt5：UI 主线程 + QThread 后台推理线程
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
-from PyQt5.QtGui import QImage, QPixmap, QIcon
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtGui import QIcon, QImage, QPixmap
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout,
-    QFileDialog, QRadioButton, QButtonGroup, QSpinBox, QDoubleSpinBox,
-    QGroupBox, QFormLayout, QMessageBox, QSystemTrayIcon
+    QApplication,
+    QButtonGroup,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QRadioButton,
+    QSpinBox,
+    QSystemTrayIcon,
+    QVBoxLayout,
+    QWidget,
 )
+
+from ultralytics import YOLO
 
 
 # 规则/推理参数集中在 RuleConfig，便于 UI 读写与实验对比
@@ -60,15 +73,15 @@ from PyQt5.QtWidgets import (
 class RuleConfig:
     # 规则阈值
     # 规则置信度阈值：低于该值的检测框不计入命中
-    conf_th: float = 0.70          # 置信度阈值（命中阈值）
+    conf_th: float = 0.70  # 置信度阈值（命中阈值）
     # 命中次数阈值：窗口内命中次数达到该值才触发
-    hits_required: int = 3         # 命中需要的 hit 数（连续/累计窗口内）
+    hits_required: int = 3  # 命中需要的 hit 数（连续/累计窗口内）
     # 命中统计窗口：仅统计最近 hit_window_sec 秒内的命中
-    hit_window_sec: float = 1.0    # 统计窗口（秒）
+    hit_window_sec: float = 1.0  # 统计窗口（秒）
     # 面积比例阈值：过滤过小的框（框面积/图像面积）
-    min_area_ratio: float = 0.00   # 最小框面积比例（框面积/图像面积），过滤小噪点框
+    min_area_ratio: float = 0.00  # 最小框面积比例（框面积/图像面积），过滤小噪点框
     # 冷却时间：触发后 cooldown_sec 内不重复触发
-    cooldown_sec: float = 1.0      # 触发后冷却时间（秒），防止连发
+    cooldown_sec: float = 1.0  # 触发后冷却时间（秒），防止连发
 
     # 推理参数
     # 推理输入尺寸：影响速度与精度
@@ -76,9 +89,9 @@ class RuleConfig:
     # NMS IoU 阈值：控制框合并强度
     iou: float = 0.5
     # 推理输出下限：设低以保留候选框，再用 conf_th 二次过滤
-    raw_conf: float = 0.001        # 模型输出的最低 conf（尽量低，避免你“看不到”潜在命中）
+    raw_conf: float = 0.001  # 模型输出的最低 conf（尽量低，避免你“看不到”潜在命中）
     # 推理设备：GPU 用 '0'，CPU 用 'cpu'
-    device: str = "0"              # "0" GPU / "cpu"
+    device: str = "0"  # "0" GPU / "cpu"
     # 单帧最大候选框数量：限制推理输出规模
     max_det: int = 300
 
@@ -90,11 +103,11 @@ class RuleConfig:
 # VideoWorker：后台线程执行视频读取与推理，避免阻塞 UI
 class VideoWorker(QThread):
     # frame_signal：发送 QImage 到 UI 线程显示
-    frame_signal = pyqtSignal(QImage)          # 给界面显示
+    frame_signal = pyqtSignal(QImage)  # 给界面显示
     # status_signal：发送运行状态字符串到 UI
-    status_signal = pyqtSignal(str)            # 状态栏
+    status_signal = pyqtSignal(str)  # 状态栏
     # notify_signal：触发通知（标题、内容）
-    notify_signal = pyqtSignal(str, str)       # (title, msg)
+    notify_signal = pyqtSignal(str, str)  # (title, msg)
     # stopped_signal：线程结束后通知 UI 复位按钮状态
     stopped_signal = pyqtSignal()
 
@@ -217,7 +230,7 @@ class VideoWorker(QThread):
                     iou=self.rule.iou,
                     device=self.rule.device,
                     verbose=False,
-                    max_det=self.rule.max_det
+                    max_det=self.rule.max_det,
                 )
             except Exception as e:
                 self.status_signal.emit(f"推理失败：{e}")
@@ -283,7 +296,7 @@ class VideoWorker(QThread):
                     # notify_signal：发送托盘通知内容到 UI
                     self.notify_signal.emit(
                         "刀具预警",
-                        f"规则命中：conf≥{self.rule.conf_th:.2f}, hits={hits}/{self.rule.hits_required}, area≥{self.rule.min_area_ratio:.3f}"
+                        f"规则命中：conf≥{self.rule.conf_th:.2f}, hits={hits}/{self.rule.hits_required}, area≥{self.rule.min_area_ratio:.3f}",
                     )
                 self._play_sound_non_block()
 
@@ -301,17 +314,16 @@ class VideoWorker(QThread):
                 cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 0, 255), 2)
                 label = f"HIT conf={conf:.2f} area={area_ratio:.3f}"
                 # 绘制文字：显示 conf 与 area_ratio 便于调参
-                cv2.putText(vis, label, (x1, max(20, y1 - 8)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                cv2.putText(vis, label, (x1, max(20, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
             # 8) 叠加调试信息（帮助你判断：没检测到 vs 被规则过滤）
             # 你之前看到“一堆框”，那是 raw 全部输出；这里我们只显示命中框，但保留统计信息。
-            elapsed = time.time() - t0
+            time.time() - t0
             t_sec = frame_id / fps
             # info1：帧号/时间/FPS/推理耗时等统计信息
             info1 = f"frame {frame_id}  t={t_sec:.2f}s  fps={fps:.1f}  infer={infer_ms:.1f}ms"
             # info2：原始框数量/命中/窗口计数/触发/剩余冷却等信息
-            info2 = f"raw_boxes={raw_count}  hit={hit_this_frame}  hits={hits}/{self.rule.hits_required}  trig={triggered}  cd={max(0.0, self.rule.cooldown_sec-(now-self.last_trigger_time)):.1f}s"
+            info2 = f"raw_boxes={raw_count}  hit={hit_this_frame}  hits={hits}/{self.rule.hits_required}  trig={triggered}  cd={max(0.0, self.rule.cooldown_sec - (now - self.last_trigger_time)):.1f}s"
             # info3：当前规则阈值配置的快照
             info3 = f"CONF_TH={self.rule.conf_th:.2f}  MIN_AREA={self.rule.min_area_ratio:.3f}  WIN={self.rule.hit_window_sec:.1f}s"
             y0 = 25
@@ -329,7 +341,9 @@ class VideoWorker(QThread):
             # 发送一帧到 UI：跨线程传递前复制数据
             self.frame_signal.emit(qimg.copy())
             # 状态栏文本：用于 UI 实时显示运行指标
-            self.status_signal.emit(f"运行中：frame={frame_id}, raw={raw_count}, hit={hit_this_frame}, hits={hits}, trig={triggered}")
+            self.status_signal.emit(
+                f"运行中：frame={frame_id}, raw={raw_count}, hit={hit_this_frame}, hits={hits}, trig={triggered}"
+            )
 
             # 控制一下线程节奏（让 UI 更丝滑）
             # 线程让步：降低 UI 卡顿概率（毫秒级）
@@ -512,7 +526,9 @@ class MainWindow(QWidget):
 
     # 选择视频：更新 video_path_label 文本
     def pick_video(self):
-        path, _ = QFileDialog.getOpenFileName(self, "选择视频", os.path.dirname(DEFAULT_VIDEO_PATH), "Video (*.mp4 *.avi *.mkv *.mov)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择视频", os.path.dirname(DEFAULT_VIDEO_PATH), "Video (*.mp4 *.avi *.mkv *.mov)"
+        )
         if path:
             self.video_path_label.setText(path)
 

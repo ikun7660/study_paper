@@ -5,39 +5,38 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import time
-import argparse
-from dataclasses import dataclass, asdict
-from typing import List, Optional, Tuple
+from dataclasses import asdict, dataclass
 
 import cv2
 import numpy as np
 import pandas as pd
-from ultralytics import YOLO
 
+from ultralytics import YOLO
 
 # =========================================================
 # 方式A：手动填写默认配置（不想打命令行就改这里）
 # =========================================================
 DEFAULT_VIDEO_PATH = r"E:\User\ultralytics-8.3.241\video\vedio_2.mp4"
 DEFAULT_MODEL_PATH = r"E:\User\ultralytics-8.3.241\runs\detect\yolov8m_150_no_copy_paste\weights\best.pt"
-DEFAULT_OUT_DIR    = r"E:\User\ultralytics-8.3.241\runs\eval_video\video_2"
+DEFAULT_OUT_DIR = r"E:\User\ultralytics-8.3.241\runs\eval_video\video_2"
 
-DEFAULT_IMGSZ  = 640
-DEFAULT_DEVICE = "0"   # GPU填 "0"，CPU填 "cpu"
+DEFAULT_IMGSZ = 640
+DEFAULT_DEVICE = "0"  # GPU填 "0"，CPU填 "cpu"
 
 # 规则默认值（论文友好）
-DEFAULT_CONF        = 0.70
-DEFAULT_IOU         = 0.50
-DEFAULT_HITS        = 3
-DEFAULT_MISS        = 2
-DEFAULT_MIN_EVENT   = 0.30
-DEFAULT_COOLDOWN    = 2.0
-DEFAULT_MIN_AREA    = 0.0
-DEFAULT_CLASS_ID    = -1    # -1 表示所有类别
-DEFAULT_MAX_DET     = 50
-DEFAULT_SAVE_PLOTS  = False # True 则保存png图（不显示窗口）
+DEFAULT_CONF = 0.70
+DEFAULT_IOU = 0.50
+DEFAULT_HITS = 3
+DEFAULT_MISS = 2
+DEFAULT_MIN_EVENT = 0.30
+DEFAULT_COOLDOWN = 2.0
+DEFAULT_MIN_AREA = 0.0
+DEFAULT_CLASS_ID = -1  # -1 表示所有类别
+DEFAULT_MAX_DET = 50
+DEFAULT_SAVE_PLOTS = False  # True 则保存png图（不显示窗口）
 
 
 # -----------------------------
@@ -52,7 +51,7 @@ class RuleConfig:
     min_event_sec: float = DEFAULT_MIN_EVENT
     cooldown_sec: float = DEFAULT_COOLDOWN
     min_area_ratio: float = DEFAULT_MIN_AREA
-    class_id: Optional[int] = None
+    class_id: int | None = None
     max_det: int = DEFAULT_MAX_DET
 
 
@@ -97,7 +96,7 @@ def ensure_dir(p: str):
     os.makedirs(p, exist_ok=True)
 
 
-def percentile(values: List[float], q: float) -> float:
+def percentile(values: list[float], q: float) -> float:
     if not values:
         return float("nan")
     arr = np.array(values, dtype=np.float32)
@@ -110,8 +109,8 @@ def pick_best_det(
     clss: np.ndarray,
     img_area: float,
     min_area_ratio: float,
-    class_id: Optional[int],
-) -> Tuple[int, float, float, int]:
+    class_id: int | None,
+) -> tuple[int, float, float, int]:
     if boxes_xyxy is None or len(boxes_xyxy) == 0:
         return 0, 0.0, 0.0, -1
 
@@ -172,14 +171,14 @@ def run_eval(
     miss_streak_in_stable = 0
     stable_state = 0
 
-    current_event_frames: List[FrameRecord] = []
-    events: List[EventRecord] = []
+    current_event_frames: list[FrameRecord] = []
+    events: list[EventRecord] = []
     event_id = 0
 
     last_trigger_time = -1e9
 
-    frames_out: List[FrameRecord] = []
-    infer_times: List[float] = []
+    frames_out: list[FrameRecord] = []
+    infer_times: list[float] = []
 
     frame_idx = -1
     start_wall = time.time()
@@ -216,7 +215,10 @@ def run_eval(
             confs = r0.boxes.conf.detach().cpu().numpy()
             clss = r0.boxes.cls.detach().cpu().numpy()
             raw_hit, best_conf, best_area_ratio, best_cls = pick_best_det(
-                boxes_xyxy, confs, clss, img_area,
+                boxes_xyxy,
+                confs,
+                clss,
+                img_area,
                 rules.min_area_ratio,
                 rules.class_id,
             )
@@ -243,19 +245,21 @@ def run_eval(
         # 事件聚合（stable片段）
         triggered = 0
         if stable_state == 1:
-            current_event_frames.append(FrameRecord(
-                video=video_name,
-                frame=frame_idx,
-                t_sec=t_sec,
-                fps_video=fps_video,
-                infer_ms=infer_ms,
-                best_conf=best_conf,
-                best_area_ratio=best_area_ratio,
-                best_cls=best_cls,
-                raw_hit=raw_hit,
-                stable=1,
-                triggered=0,
-            ))
+            current_event_frames.append(
+                FrameRecord(
+                    video=video_name,
+                    frame=frame_idx,
+                    t_sec=t_sec,
+                    fps_video=fps_video,
+                    infer_ms=infer_ms,
+                    best_conf=best_conf,
+                    best_area_ratio=best_area_ratio,
+                    best_cls=best_cls,
+                    raw_hit=raw_hit,
+                    stable=1,
+                    triggered=0,
+                )
+            )
         else:
             if current_event_frames:
                 start_t = current_event_frames[0].t_sec
@@ -264,18 +268,20 @@ def run_eval(
 
                 if duration >= rules.min_event_sec:
                     confs_evt = [fr.best_conf for fr in current_event_frames]
-                    events.append(EventRecord(
-                        video=video_name,
-                        event_id=event_id,
-                        start_frame=current_event_frames[0].frame,
-                        end_frame=current_event_frames[-1].frame,
-                        start_t=start_t,
-                        end_t=end_t,
-                        duration_sec=duration,
-                        frames=len(current_event_frames),
-                        max_conf=float(np.max(confs_evt)),
-                        mean_conf=float(np.mean(confs_evt)),
-                    ))
+                    events.append(
+                        EventRecord(
+                            video=video_name,
+                            event_id=event_id,
+                            start_frame=current_event_frames[0].frame,
+                            end_frame=current_event_frames[-1].frame,
+                            start_t=start_t,
+                            end_t=end_t,
+                            duration_sec=duration,
+                            frames=len(current_event_frames),
+                            max_conf=float(np.max(confs_evt)),
+                            mean_conf=float(np.mean(confs_evt)),
+                        )
+                    )
                     event_id += 1
 
                 current_event_frames = []
@@ -288,19 +294,21 @@ def run_eval(
                 if current_event_frames:
                     current_event_frames[-1].triggered = 1
 
-        frames_out.append(FrameRecord(
-            video=video_name,
-            frame=frame_idx,
-            t_sec=t_sec,
-            fps_video=fps_video,
-            infer_ms=infer_ms,
-            best_conf=best_conf,
-            best_area_ratio=best_area_ratio,
-            best_cls=best_cls,
-            raw_hit=raw_hit,
-            stable=stable_state,
-            triggered=triggered,
-        ))
+        frames_out.append(
+            FrameRecord(
+                video=video_name,
+                frame=frame_idx,
+                t_sec=t_sec,
+                fps_video=fps_video,
+                infer_ms=infer_ms,
+                best_conf=best_conf,
+                best_area_ratio=best_area_ratio,
+                best_cls=best_cls,
+                raw_hit=raw_hit,
+                stable=stable_state,
+                triggered=triggered,
+            )
+        )
 
     # 补结算最后事件
     if current_event_frames:
@@ -310,18 +318,20 @@ def run_eval(
 
         if duration >= rules.min_event_sec:
             confs_evt = [fr.best_conf for fr in current_event_frames]
-            events.append(EventRecord(
-                video=video_name,
-                event_id=event_id,
-                start_frame=current_event_frames[0].frame,
-                end_frame=current_event_frames[-1].frame,
-                start_t=start_t,
-                end_t=end_t,
-                duration_sec=duration,
-                frames=len(current_event_frames),
-                max_conf=float(np.max(confs_evt)),
-                mean_conf=float(np.mean(confs_evt)),
-            ))
+            events.append(
+                EventRecord(
+                    video=video_name,
+                    event_id=event_id,
+                    start_frame=current_event_frames[0].frame,
+                    end_frame=current_event_frames[-1].frame,
+                    start_t=start_t,
+                    end_t=end_t,
+                    duration_sec=duration,
+                    frames=len(current_event_frames),
+                    max_conf=float(np.max(confs_evt)),
+                    mean_conf=float(np.mean(confs_evt)),
+                )
+            )
             event_id += 1
 
     cap.release()
@@ -329,8 +339,8 @@ def run_eval(
 
     # 输出CSV
     per_frame_path = os.path.join(out_dir, f"{video_name}_per_frame.csv")
-    events_path    = os.path.join(out_dir, f"{video_name}_events.csv")
-    summary_path   = os.path.join(out_dir, f"{video_name}_summary.csv")
+    events_path = os.path.join(out_dir, f"{video_name}_events.csv")
+    summary_path = os.path.join(out_dir, f"{video_name}_summary.csv")
 
     df_pf = pd.DataFrame([asdict(x) for x in frames_out])
     df_pf.to_csv(per_frame_path, index=False, encoding="utf-8-sig")
@@ -339,12 +349,12 @@ def run_eval(
     df_ev.to_csv(events_path, index=False, encoding="utf-8-sig")
 
     duration_sec = float(df_pf["t_sec"].max()) if len(df_pf) else 0.0
-    frames_n = int(len(df_pf))
+    frames_n = len(df_pf)
     stable_rate = float(df_pf["stable"].mean()) if frames_n else 0.0
     raw_rate = float(df_pf["raw_hit"].mean()) if frames_n else 0.0
     trigger_count = int(df_pf["triggered"].sum()) if frames_n else 0
 
-    event_count = int(len(df_ev))
+    event_count = len(df_ev)
     event_mean = float(df_ev["duration_sec"].mean()) if event_count else 0.0
     event_max = float(df_ev["duration_sec"].max()) if event_count else 0.0
     event_p90 = float(np.percentile(df_ev["duration_sec"].values, 90)) if event_count else 0.0
@@ -359,12 +369,10 @@ def run_eval(
         "video": video_name,
         "video_path": video_path,
         "model_path": model_path,
-
         "duration_sec": duration_sec,
         "frames": frames_n,
         "fps_video": fps_video,
         "proc_fps": proc_fps,
-
         "conf_th": rules.conf_th,
         "iou_th": rules.iou_th,
         "hits_required": rules.hits_required,
@@ -374,16 +382,13 @@ def run_eval(
         "min_area_ratio": rules.min_area_ratio,
         "class_id": rules.class_id if rules.class_id is not None else -1,
         "max_det": rules.max_det,
-
         "raw_detect_rate": raw_rate,
         "stable_detect_rate": stable_rate,
         "trigger_count": trigger_count,
-
         "event_count": event_count,
         "event_mean_sec": event_mean,
         "event_p90_sec": event_p90,
         "event_max_sec": event_max,
-
         "avg_infer_ms": avg_infer,
         "p95_infer_ms": p95_infer,
         "p99_infer_ms": p99_infer,
@@ -444,7 +449,7 @@ def parse_args():
     ap = argparse.ArgumentParser(description="Video eval (CSV only), supports defaults in file head.")
     ap.add_argument("--video", type=str, default=DEFAULT_VIDEO_PATH, help="video path")
     ap.add_argument("--model", type=str, default=DEFAULT_MODEL_PATH, help="model .pt path")
-    ap.add_argument("--out",   type=str, default=DEFAULT_OUT_DIR, help="output dir")
+    ap.add_argument("--out", type=str, default=DEFAULT_OUT_DIR, help="output dir")
     ap.add_argument("--imgsz", type=int, default=DEFAULT_IMGSZ)
     ap.add_argument("--device", type=str, default=DEFAULT_DEVICE, help="0 or cpu")
 
