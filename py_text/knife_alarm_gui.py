@@ -51,7 +51,7 @@ from PyQt5.QtWidgets import (
 class RuleConfig:
     # 规则阈值
     conf_th: float = 0.70          # 置信度阈值（命中阈值）
-    hits_required: int = 15         # 命中需要的 hit 数（连续/累计窗口内）
+    hits_required: int = 15        # 命中需要的 hit 数（连续/累计窗口内）
     hit_window_sec: float = 1.0    # 统计窗口（秒）
     min_area_ratio: float = 0.00   # 最小框面积比例（框面积/图像面积），过滤小噪点框
     cooldown_sec: float = 1.0      # 触发后冷却时间（秒），防止连发
@@ -224,7 +224,7 @@ class VideoWorker(QThread):
                 if self.rule.enable_notify:
                     self.notify_signal.emit(
                         "刀具预警",
-                        f"规则命中：conf≥{self.rule.conf_th:.2f}, hits={hits}/{self.rule.hits_required}, area≥{self.rule.min_area_ratio:.3f}"
+                        f"规则命中：conf≥{self.rule.conf_th:.2f}，命中次数={hits}/{self.rule.hits_required}，面积≥{self.rule.min_area_ratio:.3f}"
                     )
                 self._play_sound_non_block()
 
@@ -242,17 +242,17 @@ class VideoWorker(QThread):
                 # 命中框（仅命中时画）
                 if display_alert:
                     cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 0, 255), 3)
-                    label = f"ALERT conf={conf:.2f} area={area_ratio:.3f}"
+                    label = f"报警 conf={conf:.2f} area={area_ratio:.3f}"
                     cv2.putText(vis, label, (x1, max(20, y1 - 8)),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
                 elif display_confirmed:
                     cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                    label = f"HIT conf={conf:.2f} area={area_ratio:.3f}"
+                    label = f"确认 conf={conf:.2f} area={area_ratio:.3f}"
                     cv2.putText(vis, label, (x1, max(20, y1 - 8)),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
                 elif display_candidate:
                     cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 255, 255), 1)
-                    label = f"CAND conf={conf:.2f} area={area_ratio:.3f}"
+                    label = f"候选 conf={conf:.2f} area={area_ratio:.3f}"
                     cv2.putText(vis, label, (x1, max(20, y1 - 8)),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 1)
 
@@ -261,16 +261,16 @@ class VideoWorker(QThread):
             elapsed = time.time() - t0
             t_sec = frame_id / fps
             if display_alert:
-                stage = "ALERT"
+                stage = "报警"
             elif display_confirmed:
-                stage = "CONFIRMED"
+                stage = "确认"
             elif display_candidate:
-                stage = "CANDIDATE"
+                stage = "候选"
             else:
-                stage = "NONE"
-            info1 = f"frame {frame_id}  t={t_sec:.2f}s  fps={fps:.1f}  infer={infer_ms:.1f}ms"
-            info2 = f"raw_boxes={raw_count}  hit={hit_this_frame}  hits={hits}/{self.rule.hits_required}  trig={triggered}  cd={max(0.0, self.rule.cooldown_sec-(now-self.last_trigger_time)):.1f}s  stage={stage}"
-            info3 = f"CONF_TH={self.rule.conf_th:.2f}  MIN_AREA={self.rule.min_area_ratio:.3f}  WIN={self.rule.hit_window_sec:.1f}s  DISP={self.rule.display_hits_required}"
+                stage = "无"
+            info1 = f"帧={frame_id}  时间={t_sec:.2f}s  FPS={fps:.1f}  推理={infer_ms:.1f}ms"
+            info2 = f"原始框数={raw_count}  本帧命中={hit_this_frame}  命中次数={hits}/{self.rule.hits_required}  报警触发={triggered}  冷却={max(0.0, self.rule.cooldown_sec-(now-self.last_trigger_time)):.1f}s  阶段={stage}"
+            info3 = f"conf_th={self.rule.conf_th:.2f}  最小面积={self.rule.min_area_ratio:.3f}  统计窗口={self.rule.hit_window_sec:.1f}s  显示阈值={self.rule.display_hits_required}"
             y0 = 25
             for s in [info1, info2, info3]:
                 cv2.putText(vis, s, (10, y0), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
@@ -281,7 +281,7 @@ class VideoWorker(QThread):
             rgb = cv2.cvtColor(vis, cv2.COLOR_BGR2RGB)
             qimg = QImage(rgb.data, rgb.shape[1], rgb.shape[0], rgb.strides[0], QImage.Format_RGB888)
             self.frame_signal.emit(qimg.copy())
-            self.status_signal.emit(f"运行中：frame={frame_id}, raw={raw_count}, hit={hit_this_frame}, hits={hits}, trig={triggered}, stage={stage}")
+            self.status_signal.emit(f"运行中：帧={frame_id}，原始框数={raw_count}，本帧命中={hit_this_frame}，命中次数={hits}，报警触发={triggered}，阶段={stage}")
 
             # 控制一下线程节奏（让 UI 更丝滑）
             self.msleep(1)
@@ -317,7 +317,7 @@ class MainWindow(QWidget):
 
         # --- 模型路径（方式2：界面选择）
         self.model_path_label = QLabel(DEFAULT_MODEL_PATH)
-        self.btn_pick_model = QPushButton("选择模型best.pt")
+        self.btn_pick_model = QPushButton("选择模型文件 best.pt")
         self.btn_pick_model.clicked.connect(self.pick_model)
 
         # --- 输入源选择
@@ -329,7 +329,7 @@ class MainWindow(QWidget):
         self.source_group.addButton(self.rb_cam)
 
         self.video_path_label = QLabel(DEFAULT_VIDEO_PATH)
-        self.btn_pick_video = QPushButton("选择视频")
+        self.btn_pick_video = QPushButton("选择视频文件")
         self.btn_pick_video.clicked.connect(self.pick_video)
 
         self.cam_index = QSpinBox()
@@ -345,6 +345,10 @@ class MainWindow(QWidget):
         self.hits_required = QSpinBox()
         self.hits_required.setRange(1, 30)
         self.hits_required.setValue(self.rule.hits_required)
+
+        self.display_hits_required = QSpinBox()
+        self.display_hits_required.setRange(1, 30)
+        self.display_hits_required.setValue(self.rule.display_hits_required)
 
         self.hit_window_sec = QDoubleSpinBox()
         self.hit_window_sec.setRange(0.1, 10.0)
@@ -373,12 +377,12 @@ class MainWindow(QWidget):
         self.iou.setSingleStep(0.05)
         self.iou.setValue(self.rule.iou)
 
-        self.device_label = QLabel("[device: 0(GPU) 或 cpu]:")
+        self.device_label = QLabel("推理设备 [device: 0(GPU) 或 cpu]：")
         self.device_value = QLabel(self.rule.device)
 
         # --- 控制按钮
-        self.btn_start = QPushButton("开始")
-        self.btn_stop = QPushButton("停止")
+        self.btn_start = QPushButton("开始运行")
+        self.btn_stop = QPushButton("停止运行")
         self.btn_stop.setEnabled(False)
         self.btn_start.clicked.connect(self.start)
         self.btn_stop.clicked.connect(self.stop)
@@ -388,25 +392,26 @@ class MainWindow(QWidget):
         left.addWidget(self.video_label)
         left.addWidget(self.status)
 
-        cfg_box = QGroupBox("配置")
+        cfg_box = QGroupBox("参数配置")
         form = QFormLayout()
 
         form.addRow(QLabel("模型路径："), self.model_path_label)
         form.addRow(self.btn_pick_model)
 
         form.addRow(QLabel("输入源："), self._hbox(self.rb_video, self.rb_cam))
-        form.addRow(QLabel("视频："), self.video_path_label)
+        form.addRow(QLabel("视频路径："), self.video_path_label)
         form.addRow(self.btn_pick_video)
-        form.addRow(QLabel("摄像头index："), self.cam_index)
+        form.addRow(QLabel("摄像头索引："), self.cam_index)
 
-        form.addRow(QLabel("conf_th："), self.conf_th)
-        form.addRow(QLabel("hits_required："), self.hits_required)
-        form.addRow(QLabel("hit_window_sec："), self.hit_window_sec)
-        form.addRow(QLabel("min_area_ratio："), self.min_area_ratio)
-        form.addRow(QLabel("cooldown_sec："), self.cooldown_sec)
+        form.addRow(QLabel("置信度阈值 ："), self.conf_th)
+        form.addRow(QLabel("报警命中次数 ："), self.hits_required)
+        form.addRow(QLabel("显示命中次数 ："), self.display_hits_required)
+        form.addRow(QLabel("统计窗口 ："), self.hit_window_sec)
+        form.addRow(QLabel("最小面积占比 ："), self.min_area_ratio)
+        form.addRow(QLabel("冷却时间 ："), self.cooldown_sec)
 
-        form.addRow(QLabel("imgsz："), self.imgsz)
-        form.addRow(QLabel("iou："), self.iou)
+        form.addRow(QLabel("输入尺寸 ："), self.imgsz)
+        form.addRow(QLabel("NMS IoU 阈值 ："), self.iou)
         form.addRow(self.device_label, self.device_value)
 
         form.addRow(self._hbox(self.btn_start, self.btn_stop))
@@ -431,12 +436,12 @@ class MainWindow(QWidget):
         return w
 
     def pick_model(self):
-        path, _ = QFileDialog.getOpenFileName(self, "选择模型", os.path.dirname(DEFAULT_MODEL_PATH), "PyTorch (*.pt)")
+        path, _ = QFileDialog.getOpenFileName(self, "选择模型文件", os.path.dirname(DEFAULT_MODEL_PATH), "PyTorch (*.pt)")
         if path:
             self.model_path_label.setText(path)
 
     def pick_video(self):
-        path, _ = QFileDialog.getOpenFileName(self, "选择视频", os.path.dirname(DEFAULT_VIDEO_PATH), "Video (*.mp4 *.avi *.mkv *.mov)")
+        path, _ = QFileDialog.getOpenFileName(self, "选择视频文件", os.path.dirname(DEFAULT_VIDEO_PATH), "Video (*.mp4 *.avi *.mkv *.mov)")
         if path:
             self.video_path_label.setText(path)
 
@@ -447,6 +452,7 @@ class MainWindow(QWidget):
         # 读取 UI 参数 -> rule
         self.rule.conf_th = float(self.conf_th.value())
         self.rule.hits_required = int(self.hits_required.value())
+        self.rule.display_hits_required = int(self.display_hits_required.value())
         self.rule.hit_window_sec = float(self.hit_window_sec.value())
         self.rule.min_area_ratio = float(self.min_area_ratio.value())
         self.rule.cooldown_sec = float(self.cooldown_sec.value())
@@ -456,7 +462,7 @@ class MainWindow(QWidget):
 
         model_path = self.model_path_label.text().strip()
         if not model_path:
-            QMessageBox.warning(self, "提示", "请先选择模型")
+            QMessageBox.warning(self, "提示", "请先选择模型文件")
             return
 
         source_mode = "video" if self.rb_video.isChecked() else "camera"
@@ -464,7 +470,7 @@ class MainWindow(QWidget):
         cam_index = int(self.cam_index.value())
 
         if source_mode == "video" and (not video_path or not os.path.exists(video_path)):
-            QMessageBox.warning(self, "提示", "视频路径无效，请选择视频文件")
+            QMessageBox.warning(self, "提示", "视频路径无效，请重新选择视频文件")
             return
 
         self.worker = VideoWorker(model_path, source_mode, video_path, cam_index, self.rule)
