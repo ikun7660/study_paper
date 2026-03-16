@@ -10,14 +10,14 @@
 """
 knife_alarm_gui.py
 成品：YOLO(ultralytics) + 规则判定 + 只显示命中框 + 非阻塞通知(托盘气泡) + 提示音
-支持：摄像头 / 视频文件 二选一
+支持：摄像头 / 视频文件 二选一.
 """
 
 import os
 import sys
 import time
-from dataclasses import dataclass
 from collections import deque
+from dataclasses import dataclass
 
 import cv2
 
@@ -30,37 +30,50 @@ DEFAULT_VIDEO_PATH = r"E:\User\ultralytics-8.3.241\video\video_1.mp4"
 # Windows 提示音（非阻塞）
 try:
     import winsound
+
     HAS_WINSOUND = True
 except Exception:
     HAS_WINSOUND = False
 
 # ultralytics
-from ultralytics import YOLO
-
 # PyQt5
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
-from PyQt5.QtGui import QImage, QPixmap, QIcon
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtGui import QIcon, QImage, QPixmap
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout,
-    QFileDialog, QRadioButton, QButtonGroup, QSpinBox, QDoubleSpinBox,
-    QGroupBox, QFormLayout, QMessageBox, QSystemTrayIcon
+    QApplication,
+    QButtonGroup,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QRadioButton,
+    QSpinBox,
+    QSystemTrayIcon,
+    QVBoxLayout,
+    QWidget,
 )
+
+from ultralytics import YOLO
 
 
 @dataclass
 class RuleConfig:
     # 规则阈值
-    conf_th: float = 0.70          # 置信度阈值（命中阈值）
-    hits_required: int = 3         # 命中需要的 hit 数（连续/累计窗口内）
-    hit_window_sec: float = 1.0    # 统计窗口（秒）
-    min_area_ratio: float = 0.00   # 最小框面积比例（框面积/图像面积），过滤小噪点框
-    cooldown_sec: float = 1.0      # 触发后冷却时间（秒），防止连发
+    conf_th: float = 0.70  # 置信度阈值（命中阈值）
+    hits_required: int = 3  # 命中需要的 hit 数（连续/累计窗口内）
+    hit_window_sec: float = 1.0  # 统计窗口（秒）
+    min_area_ratio: float = 0.00  # 最小框面积比例（框面积/图像面积），过滤小噪点框
+    cooldown_sec: float = 1.0  # 触发后冷却时间（秒），防止连发
 
     # 推理参数
     imgsz: int = 640
     iou: float = 0.5
-    raw_conf: float = 0.001        # 模型输出的最低 conf（尽量低，避免你“看不到”潜在命中）
-    device: str = "0"              # "0" GPU / "cpu"
+    raw_conf: float = 0.001  # 模型输出的最低 conf（尽量低，避免你“看不到”潜在命中）
+    device: str = "0"  # "0" GPU / "cpu"
     max_det: int = 300
 
     # 提示
@@ -69,9 +82,9 @@ class RuleConfig:
 
 
 class VideoWorker(QThread):
-    frame_signal = pyqtSignal(QImage)          # 给界面显示
-    status_signal = pyqtSignal(str)            # 状态栏
-    notify_signal = pyqtSignal(str, str)       # (title, msg)
+    frame_signal = pyqtSignal(QImage)  # 给界面显示
+    status_signal = pyqtSignal(str)  # 状态栏
+    notify_signal = pyqtSignal(str, str)  # (title, msg)
     stopped_signal = pyqtSignal()
 
     def __init__(self, model_path: str, source_mode: str, video_path: str, cam_index: int, rule: RuleConfig):
@@ -173,7 +186,7 @@ class VideoWorker(QThread):
                     iou=self.rule.iou,
                     device=self.rule.device,
                     verbose=False,
-                    max_det=self.rule.max_det
+                    max_det=self.rule.max_det,
                 )
             except Exception as e:
                 self.status_signal.emit(f"推理失败：{e}")
@@ -221,7 +234,7 @@ class VideoWorker(QThread):
                 if self.rule.enable_notify:
                     self.notify_signal.emit(
                         "刀具预警",
-                        f"规则命中：conf≥{self.rule.conf_th:.2f}, hits={hits}/{self.rule.hits_required}, area≥{self.rule.min_area_ratio:.3f}"
+                        f"规则命中：conf≥{self.rule.conf_th:.2f}, hits={hits}/{self.rule.hits_required}, area≥{self.rule.min_area_ratio:.3f}",
                     )
                 self._play_sound_non_block()
 
@@ -235,15 +248,14 @@ class VideoWorker(QThread):
                 # 命中框（仅命中时画）
                 cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 0, 255), 2)
                 label = f"HIT conf={conf:.2f} area={area_ratio:.3f}"
-                cv2.putText(vis, label, (x1, max(20, y1 - 8)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                cv2.putText(vis, label, (x1, max(20, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
             # 8) 叠加调试信息（帮助你判断：没检测到 vs 被规则过滤）
             # 你之前看到“一堆框”，那是 raw 全部输出；这里我们只显示命中框，但保留统计信息。
-            elapsed = time.time() - t0
+            time.time() - t0
             t_sec = frame_id / fps
             info1 = f"frame {frame_id}  t={t_sec:.2f}s  fps={fps:.1f}  infer={infer_ms:.1f}ms"
-            info2 = f"raw_boxes={raw_count}  hit={hit_this_frame}  hits={hits}/{self.rule.hits_required}  trig={triggered}  cd={max(0.0, self.rule.cooldown_sec-(now-self.last_trigger_time)):.1f}s"
+            info2 = f"raw_boxes={raw_count}  hit={hit_this_frame}  hits={hits}/{self.rule.hits_required}  trig={triggered}  cd={max(0.0, self.rule.cooldown_sec - (now - self.last_trigger_time)):.1f}s"
             info3 = f"CONF_TH={self.rule.conf_th:.2f}  MIN_AREA={self.rule.min_area_ratio:.3f}  WIN={self.rule.hit_window_sec:.1f}s"
             y0 = 25
             for s in [info1, info2, info3]:
@@ -255,7 +267,9 @@ class VideoWorker(QThread):
             rgb = cv2.cvtColor(vis, cv2.COLOR_BGR2RGB)
             qimg = QImage(rgb.data, rgb.shape[1], rgb.shape[0], rgb.strides[0], QImage.Format_RGB888)
             self.frame_signal.emit(qimg.copy())
-            self.status_signal.emit(f"运行中：frame={frame_id}, raw={raw_count}, hit={hit_this_frame}, hits={hits}, trig={triggered}")
+            self.status_signal.emit(
+                f"运行中：frame={frame_id}, raw={raw_count}, hit={hit_this_frame}, hits={hits}, trig={triggered}"
+            )
 
             # 控制一下线程节奏（让 UI 更丝滑）
             self.msleep(1)
@@ -410,7 +424,9 @@ class MainWindow(QWidget):
             self.model_path_label.setText(path)
 
     def pick_video(self):
-        path, _ = QFileDialog.getOpenFileName(self, "选择视频", os.path.dirname(DEFAULT_VIDEO_PATH), "Video (*.mp4 *.avi *.mkv *.mov)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择视频", os.path.dirname(DEFAULT_VIDEO_PATH), "Video (*.mp4 *.avi *.mkv *.mov)"
+        )
         if path:
             self.video_path_label.setText(path)
 

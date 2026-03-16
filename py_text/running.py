@@ -1,20 +1,21 @@
-import cv2
-import time
 import threading
-from ultralytics import YOLO
+import time
+
+# Python 标准库 GUI，用于弹窗提示
+import tkinter as tk
 
 # ====================== 声音 & 弹窗 ======================
 # Windows 自带蜂鸣音（不需要额外 pip 安装）
 import winsound
-
-# Python 标准库 GUI，用于弹窗提示
-import tkinter as tk
 from tkinter import messagebox
 
+import cv2
+
+from ultralytics import YOLO
 
 # ====================== 参数配置区（核心可调） ======================
 
-MODEL_PATH = r"runs\detect\train6\weights\best.pt"        # 你训练好的 YOLO 权重路径
+MODEL_PATH = r"runs\detect\train6\weights\best.pt"  # 你训练好的 YOLO 权重路径
 
 TARGET_CLASS_ID = None
 # 只针对某一个类别触发（例如 0 表示“人”）
@@ -54,10 +55,9 @@ last_trigger_time = 0
 
 # ====================== 弹窗 + 声音（子线程执行） ======================
 
+
 def popup_and_beep(text: str):
-    """
-    弹窗 + 声音提示函数
-    放在子线程中执行，避免阻塞摄像头主循环
+    """弹窗 + 声音提示函数 放在子线程中执行，避免阻塞摄像头主循环.
     """
     try:
         # 蜂鸣音（频率Hz, 时长ms）
@@ -127,9 +127,9 @@ while True:
     # ====================== 连续命中计数逻辑 ======================
 
     if detected:
-        hit_count += 1      # 本帧满足条件 → 连续命中 +1
+        hit_count += 1  # 本帧满足条件 → 连续命中 +1
     else:
-        hit_count = 0       # 中断 → 清零
+        hit_count = 0  # 中断 → 清零
 
     # ====================== 结果可视化 ======================
 
@@ -144,7 +144,7 @@ while True:
         cv2.FONT_HERSHEY_SIMPLEX,
         0.8,
         (0, 255, 0) if detected else (0, 0, 255),
-        2
+        2,
     )
 
     cv2.imshow("cam", annotated)
@@ -162,13 +162,11 @@ while True:
 
         # 使用子线程弹窗 + 声音
         threading.Thread(
-            target=popup_and_beep,
-            args=(f"检测到目标（conf ≥ {CONF_TH}，连续 {MIN_HITS} 帧）",),
-            daemon=True
+            target=popup_and_beep, args=(f"检测到目标（conf ≥ {CONF_TH}，连续 {MIN_HITS} 帧）",), daemon=True
         ).start()
 
     # 按 q 键退出
-    if cv2.waitKey(1) & 0xFF == ord('q'):
+    if cv2.waitKey(1) & 0xFF == ord("q"):
         break
 
 
