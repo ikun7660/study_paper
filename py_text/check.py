@@ -1,10 +1,10 @@
 from pathlib import Path
 
-
 LABEL_DIRS = [
     Path(r"E:\User\ultralytics-8.3.241\datasets\Knife\train\labels"),
     Path(r"E:\User\ultralytics-8.3.241\datasets\Knife\valid\labels"),
 ]
+
 
 def check_one_file(p: Path):
     bad_lines = []
@@ -26,6 +26,7 @@ def check_one_file(p: Path):
             bad_lines.append((i, len(parts), line[:120]))
     return bad_lines
 
+
 def main():
     total_bad_files = 0
     for d in LABEL_DIRS:
@@ -46,11 +47,12 @@ def main():
             print(f"发现异常文件数: {len(bad_files)}")
             for p, bad in bad_files:
                 print(f"\n[异常] {p.name}")
-                for (lineno, ncols, preview) in bad[:3]:  # 每个文件最多预览 3 行
+                for lineno, ncols, preview in bad[:3]:  # 每个文件最多预览 3 行
                     print(f"  行{lineno}: 列数={ncols} 内容预览: {preview}")
 
     print(f"\n总异常文件数: {total_bad_files}")
     print("提示：列数>5 通常是分割 polygon（segment）格式；列数<5 通常是损坏/空格问题。")
+
 
 if __name__ == "__main__":
     main()

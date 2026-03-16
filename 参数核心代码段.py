@@ -41,15 +41,9 @@ def run_one_rule(model, video_path, rule, out_dir):
         # 记录推理开始时间
         t0 = time.time()
         # 模型推理（低置信度阈值用于后续规则二次筛选）
-        res = model.predict(
-            frame,
-            imgsz=640,
-            conf=0.001,
-            iou=0.7,
-            verbose=False
-        )
+        res = model.predict(frame, imgsz=640, conf=0.001, iou=0.7, verbose=False)
         # 累计推理耗时
-        infer_time_sum += (time.time() - t0)
+        infer_time_sum += time.time() - t0
         n_infer += 1
 
         # 提取检测框并按类别筛选
@@ -100,11 +94,21 @@ def run_one_rule(model, video_path, rule, out_dir):
             hit_count = 0
 
         # 记录当前帧信息
-        frames.append(FrameRecord(
-            rule.name, frame_idx, t_sec, detected, hit_count,
-            triggered, best_conf, best_area_ratio,
-            n_boxes, max_conf_any, mean_conf
-        ))
+        frames.append(
+            FrameRecord(
+                rule.name,
+                frame_idx,
+                t_sec,
+                detected,
+                hit_count,
+                triggered,
+                best_conf,
+                best_area_ratio,
+                n_boxes,
+                max_conf_any,
+                mean_conf,
+            )
+        )
 
     # 释放视频资源
     cap.release()
@@ -144,7 +148,7 @@ def run_one_rule(model, video_path, rule, out_dir):
         "triggers_per_min": triggers_per_min,
         "detected_ratio": detected_ratio,
         "avg_infer_ms": avg_infer_ms,
-        "effective_fps": eff_fps
+        "effective_fps": eff_fps,
     }
 
     # 返回当前规则的汇总指标
