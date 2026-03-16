@@ -51,7 +51,7 @@ from PyQt5.QtWidgets import (
 class RuleConfig:
     # 规则阈值
     conf_th: float = 0.70          # 置信度阈值（命中阈值）
-    hits_required: int = 3         # 命中需要的 hit 数（连续/累计窗口内）
+    hits_required: int = 15         # 命中需要的 hit 数（连续/累计窗口内）
     hit_window_sec: float = 1.0    # 统计窗口（秒）
     min_area_ratio: float = 0.00   # 最小框面积比例（框面积/图像面积），过滤小噪点框
     cooldown_sec: float = 1.0      # 触发后冷却时间（秒），防止连发
@@ -62,6 +62,9 @@ class RuleConfig:
     raw_conf: float = 0.001        # 模型输出的最低 conf（尽量低，避免你“看不到”潜在命中）
     device: str = "0"              # "0" GPU / "cpu"
     max_det: int = 300
+
+    # 分级显示
+    display_hits_required: int = 10 # 正式显示命中框所需的 hit 数
 
     # 提示
     enable_sound: bool = True
@@ -225,6 +228,10 @@ class VideoWorker(QThread):
                     )
                 self._play_sound_non_block()
 
+            display_candidate = best is not None
+            display_confirmed = display_candidate and (hits >= self.rule.display_hits_required)
+            display_alert = display_confirmed and (triggered == 1 or self._within_cooldown(now))
+
             # 7) 可视化：只画“命中框”
             vis = frame.copy()
 
@@ -233,18 +240,37 @@ class VideoWorker(QThread):
                 x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
 
                 # 命中框（仅命中时画）
-                cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                label = f"HIT conf={conf:.2f} area={area_ratio:.3f}"
-                cv2.putText(vis, label, (x1, max(20, y1 - 8)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                if display_alert:
+                    cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 0, 255), 3)
+                    label = f"ALERT conf={conf:.2f} area={area_ratio:.3f}"
+                    cv2.putText(vis, label, (x1, max(20, y1 - 8)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                elif display_confirmed:
+                    cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                    label = f"HIT conf={conf:.2f} area={area_ratio:.3f}"
+                    cv2.putText(vis, label, (x1, max(20, y1 - 8)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                elif display_candidate:
+                    cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 255, 255), 1)
+                    label = f"CAND conf={conf:.2f} area={area_ratio:.3f}"
+                    cv2.putText(vis, label, (x1, max(20, y1 - 8)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 1)
 
             # 8) 叠加调试信息（帮助你判断：没检测到 vs 被规则过滤）
             # 你之前看到“一堆框”，那是 raw 全部输出；这里我们只显示命中框，但保留统计信息。
             elapsed = time.time() - t0
             t_sec = frame_id / fps
+            if display_alert:
+                stage = "ALERT"
+            elif display_confirmed:
+                stage = "CONFIRMED"
+            elif display_candidate:
+                stage = "CANDIDATE"
+            else:
+                stage = "NONE"
             info1 = f"frame {frame_id}  t={t_sec:.2f}s  fps={fps:.1f}  infer={infer_ms:.1f}ms"
-            info2 = f"raw_boxes={raw_count}  hit={hit_this_frame}  hits={hits}/{self.rule.hits_required}  trig={triggered}  cd={max(0.0, self.rule.cooldown_sec-(now-self.last_trigger_time)):.1f}s"
-            info3 = f"CONF_TH={self.rule.conf_th:.2f}  MIN_AREA={self.rule.min_area_ratio:.3f}  WIN={self.rule.hit_window_sec:.1f}s"
+            info2 = f"raw_boxes={raw_count}  hit={hit_this_frame}  hits={hits}/{self.rule.hits_required}  trig={triggered}  cd={max(0.0, self.rule.cooldown_sec-(now-self.last_trigger_time)):.1f}s  stage={stage}"
+            info3 = f"CONF_TH={self.rule.conf_th:.2f}  MIN_AREA={self.rule.min_area_ratio:.3f}  WIN={self.rule.hit_window_sec:.1f}s  DISP={self.rule.display_hits_required}"
             y0 = 25
             for s in [info1, info2, info3]:
                 cv2.putText(vis, s, (10, y0), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
@@ -255,7 +281,7 @@ class VideoWorker(QThread):
             rgb = cv2.cvtColor(vis, cv2.COLOR_BGR2RGB)
             qimg = QImage(rgb.data, rgb.shape[1], rgb.shape[0], rgb.strides[0], QImage.Format_RGB888)
             self.frame_signal.emit(qimg.copy())
-            self.status_signal.emit(f"运行中：frame={frame_id}, raw={raw_count}, hit={hit_this_frame}, hits={hits}, trig={triggered}")
+            self.status_signal.emit(f"运行中：frame={frame_id}, raw={raw_count}, hit={hit_this_frame}, hits={hits}, trig={triggered}, stage={stage}")
 
             # 控制一下线程节奏（让 UI 更丝滑）
             self.msleep(1)
@@ -426,6 +452,7 @@ class MainWindow(QWidget):
         self.rule.cooldown_sec = float(self.cooldown_sec.value())
         self.rule.imgsz = int(self.imgsz.value())
         self.rule.iou = float(self.iou.value())
+        self.rule.display_hits_required = min(self.rule.display_hits_required, self.rule.hits_required)
 
         model_path = self.model_path_label.text().strip()
         if not model_path:
