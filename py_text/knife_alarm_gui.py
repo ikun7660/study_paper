@@ -51,6 +51,8 @@ from PyQt5.QtWidgets import (
 class RuleConfig:
     # 规则阈值
     conf_th: float = 0.70          # 置信度阈值（命中阈值）
+    conf_enter: float = 0.80       # 进入候选状态阈值
+    conf_keep: float = 0.65        # 保持候选状态阈值
     hits_required: int = 3         # 命中需要的 hit 数（连续/累计窗口内）
     hit_window_sec: float = 1.0    # 统计窗口（秒）
     min_area_ratio: float = 0.00   # 最小框面积比例（框面积/图像面积），过滤小噪点框
@@ -87,6 +89,9 @@ class VideoWorker(QThread):
         # hits 统计：保存最近窗口内的 hit 时间戳
         self.hit_times = deque()
         self.last_trigger_time = 0.0
+
+        self.in_candidate_state = False
+        self.last_best = None
 
     def stop(self):
         self._stop_flag = True
@@ -184,6 +189,8 @@ class VideoWorker(QThread):
             best = None  # (conf, xyxy, cls)
             raw_count = 0
 
+            curr_conf_th = self.rule.conf_keep if self.in_candidate_state else self.rule.conf_enter
+
             r0 = results[0]
             if r0.boxes is not None and len(r0.boxes) > 0:
                 for b in r0.boxes:
@@ -194,7 +201,7 @@ class VideoWorker(QThread):
                     area_ratio = max(0.0, (x2 - x1) * (y2 - y1)) / img_area
 
                     # 规则过滤：conf + 面积
-                    if conf < self.rule.conf_th:
+                    if conf < curr_conf_th:
                         continue
                     if area_ratio < self.rule.min_area_ratio:
                         continue
@@ -205,7 +212,22 @@ class VideoWorker(QThread):
             now = time.time()
 
             # 5) 规则判定：本帧是否 hit
-            hit_this_frame = 1 if best is not None else 0
+            hit_this_frame = 0
+            if not self.in_candidate_state:
+                if best is not None:
+                    self.in_candidate_state = True
+                    self.last_best = best
+                    hit_this_frame = 1
+            else:
+                if best is not None:
+                    self.last_best = best
+                    hit_this_frame = 1
+                else:
+                    self.in_candidate_state = False
+                    self.last_best = None
+                    self.hit_times.clear()
+                    hit_this_frame = 0
+
             if hit_this_frame:
                 self._push_hit(now)
 
@@ -221,7 +243,7 @@ class VideoWorker(QThread):
                 if self.rule.enable_notify:
                     self.notify_signal.emit(
                         "刀具预警",
-                        f"规则命中：conf≥{self.rule.conf_th:.2f}, hits={hits}/{self.rule.hits_required}, area≥{self.rule.min_area_ratio:.3f}"
+                        f"规则命中：enter≥{self.rule.conf_enter:.2f}, keep≥{self.rule.conf_keep:.2f}, hits={hits}/{self.rule.hits_required}, area≥{self.rule.min_area_ratio:.3f}"
                     )
                 self._play_sound_non_block()
 
@@ -244,7 +266,7 @@ class VideoWorker(QThread):
             t_sec = frame_id / fps
             info1 = f"frame {frame_id}  t={t_sec:.2f}s  fps={fps:.1f}  infer={infer_ms:.1f}ms"
             info2 = f"raw_boxes={raw_count}  hit={hit_this_frame}  hits={hits}/{self.rule.hits_required}  trig={triggered}  cd={max(0.0, self.rule.cooldown_sec-(now-self.last_trigger_time)):.1f}s"
-            info3 = f"CONF_TH={self.rule.conf_th:.2f}  MIN_AREA={self.rule.min_area_ratio:.3f}  WIN={self.rule.hit_window_sec:.1f}s"
+            info3 = f"ENTER={self.rule.conf_enter:.2f}  KEEP={self.rule.conf_keep:.2f}  STATE={'ON' if self.in_candidate_state else 'OFF'}  MIN_AREA={self.rule.min_area_ratio:.3f}  WIN={self.rule.hit_window_sec:.1f}s"
             y0 = 25
             for s in [info1, info2, info3]:
                 cv2.putText(vis, s, (10, y0), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
@@ -420,6 +442,9 @@ class MainWindow(QWidget):
 
         # 读取 UI 参数 -> rule
         self.rule.conf_th = float(self.conf_th.value())
+        self.rule.conf_enter = self.rule.conf_th
+        if self.rule.conf_keep >= self.rule.conf_enter:
+            self.rule.conf_keep = max(0.0, self.rule.conf_enter - 0.05)
         self.rule.hits_required = int(self.hits_required.value())
         self.rule.hit_window_sec = float(self.hit_window_sec.value())
         self.rule.min_area_ratio = float(self.min_area_ratio.value())
