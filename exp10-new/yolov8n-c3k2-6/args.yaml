@@ -10,7 +10,7 @@ imgsz: 640
 save: true
 save_period: -1
 cache: disk
-device: '0'
+device: "0"
 workers: 0
 project: exp10-new
 name: yolov8n-c3k2-6

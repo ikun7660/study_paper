@@ -1,16 +1,16 @@
+from __future__ import annotations
+
 import os
 import time
-import csv
-import math
-from dataclasses import dataclass, asdict
-from typing import List, Dict, Any, Optional, Tuple
+from dataclasses import asdict, dataclass
+from typing import Any
 
 import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-from ultralytics import YOLO
 
+from ultralytics import YOLO
 
 # =========================
 # 你只需要改这里
@@ -26,8 +26,8 @@ TARGET_CLASS_ID = None  # None=任何类别都算；如果只关心 knife 类，
 # 评估方案（系统规则）列表：你可以按需增减
 # =========================
 # 建议：先跑 4~8 个方案够写论文
- # 加“目标面积比”过滤：抑制远处小框噪声
- # # 更严格
+# 加“目标面积比”过滤：抑制远处小框噪声
+# # 更严格
 RULE_SETS = [
     # name, conf_th, min_hits, cooldown, min_area_ratio
     ("R1_conf0.70_hits1_area0.00_cd0", 0.70, 1, 0.0, 0.00),
@@ -57,14 +57,14 @@ class FrameRecord:
     rule_name: str
     frame_idx: int
     t_sec: float
-    detected: int                 # 0/1：本帧是否满足有效检测条件
-    hit_count: int                # 连续命中计数（本帧处理后）
-    triggered: int                # 0/1：本帧是否触发“预警事件”
-    best_conf: float              # 本帧最强置信度（满足类筛选后取最大；没有则 0）
-    best_area_ratio: float        # 与 best_conf 对应的 area_ratio；没有则 0
-    n_boxes: int                  # 本帧框数量（类筛选后）
-    max_conf_any: float           # 本帧所有框最大 conf（类筛选后）
-    mean_conf: float              # 本帧平均 conf（类筛选后；没有则 0）
+    detected: int  # 0/1：本帧是否满足有效检测条件
+    hit_count: int  # 连续命中计数（本帧处理后）
+    triggered: int  # 0/1：本帧是否触发“预警事件”
+    best_conf: float  # 本帧最强置信度（满足类筛选后取最大；没有则 0）
+    best_area_ratio: float  # 与 best_conf 对应的 area_ratio；没有则 0
+    n_boxes: int  # 本帧框数量（类筛选后）
+    max_conf_any: float  # 本帧所有框最大 conf（类筛选后）
+    mean_conf: float  # 本帧平均 conf（类筛选后；没有则 0）
 
 
 @dataclass
@@ -95,7 +95,7 @@ def safe_float(x, default=0.0):
         return default
 
 
-def read_video_info(cap: cv2.VideoCapture) -> Tuple[int, int, float, int]:
+def read_video_info(cap: cv2.VideoCapture) -> tuple[int, int, float, int]:
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = float(cap.get(cv2.CAP_PROP_FPS))
@@ -103,10 +103,8 @@ def read_video_info(cap: cv2.VideoCapture) -> Tuple[int, int, float, int]:
     return w, h, fps, frame_count
 
 
-def extract_boxes(r, target_cls: Optional[int]) -> List[Tuple[float, int, Tuple[float,float,float,float]]]:
-    """
-    返回 [(conf, cls, (x1,y1,x2,y2)), ...]，已按 target_cls 筛选
-    """
+def extract_boxes(r, target_cls: int | None) -> list[tuple[float, int, tuple[float, float, float, float]]]:
+    """返回 [(conf, cls, (x1,y1,x2,y2)), ...]，已按 target_cls 筛选."""
     out = []
     if r.boxes is None or len(r.boxes) == 0:
         return out
@@ -141,13 +139,9 @@ def run_one_rule(
     out_dir: str,
     imgsz: int = 640,
     iou: float = 0.7,
-    device: Optional[int] = None,
-) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, Any]]:
-    """
-    返回：
-      df_frames: 每帧记录
-      df_events: 事件记录
-      summary: 汇总字典
+    device: int | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    """返回： df_frames: 每帧记录 df_events: 事件记录 summary: 汇总字典.
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -159,16 +153,16 @@ def run_one_rule(
 
     hit_count = 0
     last_trigger_t = -1e9
-    frames: List[FrameRecord] = []
+    frames: list[FrameRecord] = []
 
     # 事件统计：把一次“连续命中”段落当做 event（更方便论文）
-    events: List[EventRecord] = []
+    events: list[EventRecord] = []
     in_event = False
     event_id = 0
     event_start_frame = 0
     event_start_t = 0.0
     event_max_hit = 0
-    event_conf_list: List[float] = []
+    event_conf_list: list[float] = []
     event_max_conf = 0.0
 
     # 计时：推理性能
@@ -193,10 +187,10 @@ def run_one_rule(
             conf=0.001,  # 先尽量多出框，后面用 rule.conf_th 再过滤
             iou=iou,
             device=device,
-            verbose=False
+            verbose=False,
         )
         t_infer1 = time.time()
-        infer_time_sum += (t_infer1 - t_infer0)
+        infer_time_sum += t_infer1 - t_infer0
         n_infer += 1
 
         r = res[0]
@@ -236,19 +230,21 @@ def run_one_rule(
             last_trigger_t = t_sec
             hit_count = 0  # 触发后清零，避免连续重复触发
 
-        frames.append(FrameRecord(
-            rule_name=rule.name,
-            frame_idx=frame_idx,
-            t_sec=t_sec,
-            detected=detected,
-            hit_count=hit_count,
-            triggered=triggered,
-            best_conf=best_conf,
-            best_area_ratio=best_area_ratio,
-            n_boxes=n_boxes,
-            max_conf_any=max_conf_any,
-            mean_conf=mean_conf
-        ))
+        frames.append(
+            FrameRecord(
+                rule_name=rule.name,
+                frame_idx=frame_idx,
+                t_sec=t_sec,
+                detected=detected,
+                hit_count=hit_count,
+                triggered=triggered,
+                best_conf=best_conf,
+                best_area_ratio=best_area_ratio,
+                n_boxes=n_boxes,
+                max_conf_any=max_conf_any,
+                mean_conf=mean_conf,
+            )
+        )
 
         # 事件段落：以 detected=1 的连续段为事件（注意：触发 triggered 可能在事件中出现）
         if detected and not in_event:
@@ -271,7 +267,29 @@ def run_one_rule(
             end_t = end_frame / fps if fps > 0 else float(end_frame)
             dur = max(0.0, end_t - event_start_t)
             mean_event_conf = float(np.mean(event_conf_list)) if event_conf_list else 0.0
-            events.append(EventRecord(
+            events.append(
+                EventRecord(
+                    rule_name=rule.name,
+                    event_id=event_id,
+                    start_frame=event_start_frame,
+                    end_frame=end_frame,
+                    start_t=event_start_t,
+                    end_t=end_t,
+                    duration_sec=dur,
+                    max_hit_in_event=event_max_hit,
+                    max_conf_in_event=event_max_conf,
+                    mean_conf_in_event=mean_event_conf,
+                )
+            )
+
+    # 结尾仍在事件中
+    if in_event:
+        end_frame = frame_idx
+        end_t = end_frame / fps if fps > 0 else float(end_frame)
+        dur = max(0.0, end_t - event_start_t)
+        mean_event_conf = float(np.mean(event_conf_list)) if event_conf_list else 0.0
+        events.append(
+            EventRecord(
                 rule_name=rule.name,
                 event_id=event_id,
                 start_frame=event_start_frame,
@@ -281,27 +299,9 @@ def run_one_rule(
                 duration_sec=dur,
                 max_hit_in_event=event_max_hit,
                 max_conf_in_event=event_max_conf,
-                mean_conf_in_event=mean_event_conf
-            ))
-
-    # 结尾仍在事件中
-    if in_event:
-        end_frame = frame_idx
-        end_t = end_frame / fps if fps > 0 else float(end_frame)
-        dur = max(0.0, end_t - event_start_t)
-        mean_event_conf = float(np.mean(event_conf_list)) if event_conf_list else 0.0
-        events.append(EventRecord(
-            rule_name=rule.name,
-            event_id=event_id,
-            start_frame=event_start_frame,
-            end_frame=end_frame,
-            start_t=event_start_t,
-            end_t=end_t,
-            duration_sec=dur,
-            max_hit_in_event=event_max_hit,
-            max_conf_in_event=event_max_conf,
-            mean_conf_in_event=mean_event_conf
-        ))
+                mean_conf_in_event=mean_event_conf,
+            )
+        )
 
     cap.release()
     t1_wall = time.time()
@@ -357,30 +357,23 @@ def run_one_rule(
         "fps": fps,
         "frame_count": frame_count,
         "duration_sec": duration_sec,
-
         "conf_th": rule.conf_th,
         "min_hits": rule.min_hits,
         "cooldown_sec": rule.cooldown_sec,
         "min_area_ratio": rule.min_area_ratio,
-
         "n_frames": n_frames,
         "detected_frames": n_detected_frames,
         "detected_ratio": detected_ratio,
         "trigger_count": n_triggers,
         "triggers_per_min": triggers_per_min,
-
         "mean_trigger_interval_sec": mean_trigger_interval,
         "min_trigger_interval_sec": min_trigger_interval,
-
         "max_hit_in_event": max_hit_event,
-
         "avg_infer_ms": avg_infer_ms,
         "effective_fps": eff_fps,
-
         "mean_best_conf": mean_best_conf,
         "p50_best_conf": p50_best_conf,
         "p90_best_conf": p90_best_conf,
-
         "wall_time_sec": (t1_wall - t0_wall),
     }
 
@@ -464,7 +457,7 @@ def main():
             out_dir=out_dir,
             imgsz=640,
             iou=0.7,
-            device=0  # 有GPU写0；没有GPU可改为 None 或 "cpu"
+            device=0,  # 有GPU写0；没有GPU可改为 None 或 "cpu"
         )
         all_summaries.append(summary)
 
@@ -473,10 +466,20 @@ def main():
 
     # 生成一个“论文用对比表”友好的简表（你后面直接截图/贴表）
     cols = [
-        "rule_name", "conf_th", "min_hits", "cooldown_sec", "min_area_ratio",
-        "trigger_count", "triggers_per_min", "detected_ratio",
-        "mean_trigger_interval_sec", "avg_infer_ms", "effective_fps",
-        "mean_best_conf", "p50_best_conf", "p90_best_conf"
+        "rule_name",
+        "conf_th",
+        "min_hits",
+        "cooldown_sec",
+        "min_area_ratio",
+        "trigger_count",
+        "triggers_per_min",
+        "detected_ratio",
+        "mean_trigger_interval_sec",
+        "avg_infer_ms",
+        "effective_fps",
+        "mean_best_conf",
+        "p50_best_conf",
+        "p90_best_conf",
     ]
     df_comp = df_all[cols].copy()
     df_comp.to_csv(os.path.join(run_root, "PAPER_table.csv"), index=False, encoding="utf-8-sig")

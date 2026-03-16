@@ -1,12 +1,14 @@
-import cv2
-from ultralytics import YOLO
 from pathlib import Path
+
+import cv2
+
+from ultralytics import YOLO
 
 # ======== 修改这里 ========
 VIDEO_PATH = r"E:\User\ultralytics-8.3.241\video\vedio_2.mp4"
 MODEL_PATH = r"E:\User\ultralytics-8.3.241\runs\detect\yolov8m_150_no_copy_paste\weights\best.pt"
 OUT_DIR = r"./"
-CONF_TH = 0.5     # 置信度阈值（传统YOLO用这个就够）
+CONF_TH = 0.5  # 置信度阈值（传统YOLO用这个就够）
 # =========================
 
 Path(OUT_DIR).mkdir(parents=True, exist_ok=True)
@@ -23,12 +25,7 @@ while True:
         break
 
     # YOLO 推理
-    results = model.predict(
-        source=frame,
-        conf=CONF_TH,
-        iou=0.45,
-        verbose=False
-    )
+    results = model.predict(source=frame, conf=CONF_TH, iou=0.45, verbose=False)
 
     r = results[0]
 
