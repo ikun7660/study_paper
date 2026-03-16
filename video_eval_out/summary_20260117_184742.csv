@@ -1,0 +1,2 @@
+﻿video,model,CONF_TH,MIN_AREA_RATIO,HITS_TO_TRIGGER,COOLDOWN_SEC,frames,duration_s,raw_any_frame_rate,detected_frame_rate,max_best_raw_conf,max_best_filter_conf,trigger_times,events,avg_event_duration_s,max_event_duration_s,avg_infer_ms
+E:\User\ultralytics-8.3.241\video\vedio_2.mp4,runs\detect\yolov8m_150_no_copy_paste\weights\best.pt,0.7,0.0,1,0.0,2380,79.3,0.9907563025210084,0.3134453781512605,0.889312207698822,0.889312207698822,746,96,0.22569444444444434,7.5,17.03224683008274
