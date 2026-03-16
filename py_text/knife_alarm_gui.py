@@ -75,6 +75,7 @@ class VideoWorker(QThread):
     frame_signal = pyqtSignal(QImage)          # 给界面显示
     status_signal = pyqtSignal(str)            # 状态栏
     notify_signal = pyqtSignal(str, str)       # (title, msg)
+    info_signal = pyqtSignal(dict)             # 运行信息
     stopped_signal = pyqtSignal()
 
     def __init__(self, model_path: str, source_mode: str, video_path: str, cam_index: int, rule: RuleConfig):
@@ -242,19 +243,10 @@ class VideoWorker(QThread):
                 # 命中框（仅命中时画）
                 if display_alert:
                     cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 0, 255), 3)
-                    label = f"报警 conf={conf:.2f} area={area_ratio:.3f}"
-                    cv2.putText(vis, label, (x1, max(20, y1 - 8)),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
                 elif display_confirmed:
                     cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                    label = f"确认 conf={conf:.2f} area={area_ratio:.3f}"
-                    cv2.putText(vis, label, (x1, max(20, y1 - 8)),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
                 elif display_candidate:
                     cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 255, 255), 1)
-                    label = f"候选 conf={conf:.2f} area={area_ratio:.3f}"
-                    cv2.putText(vis, label, (x1, max(20, y1 - 8)),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 1)
 
             # 8) 叠加调试信息（帮助你判断：没检测到 vs 被规则过滤）
             # 你之前看到“一堆框”，那是 raw 全部输出；这里我们只显示命中框，但保留统计信息。
@@ -268,14 +260,34 @@ class VideoWorker(QThread):
                 stage = "候选"
             else:
                 stage = "无"
-            info1 = f"帧={frame_id}  时间={t_sec:.2f}s  FPS={fps:.1f}  推理={infer_ms:.1f}ms"
-            info2 = f"原始框数={raw_count}  本帧命中={hit_this_frame}  命中次数={hits}/{self.rule.hits_required}  报警触发={triggered}  冷却={max(0.0, self.rule.cooldown_sec-(now-self.last_trigger_time)):.1f}s  阶段={stage}"
-            info3 = f"conf_th={self.rule.conf_th:.2f}  最小面积={self.rule.min_area_ratio:.3f}  统计窗口={self.rule.hit_window_sec:.1f}s  显示阈值={self.rule.display_hits_required}"
-            y0 = 25
-            for s in [info1, info2, info3]:
-                cv2.putText(vis, s, (10, y0), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
-                cv2.putText(vis, s, (10, y0), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 1)
-                y0 += 25
+
+            best_conf = 0.0
+            best_area_ratio = 0.0
+            if best is not None:
+                best_conf = best[0]
+                best_area_ratio = best[3]
+
+            cooldown_left = max(0.0, self.rule.cooldown_sec - (now - self.last_trigger_time))
+
+            self.info_signal.emit({
+                "frame_id": frame_id,
+                "time_sec": t_sec,
+                "fps": fps,
+                "infer_ms": infer_ms,
+                "raw_count": raw_count,
+                "hit_this_frame": hit_this_frame,
+                "hits": hits,
+                "hits_required": self.rule.hits_required,
+                "display_hits_required": self.rule.display_hits_required,
+                "triggered": triggered,
+                "cooldown_left": cooldown_left,
+                "stage": stage,
+                "best_conf": best_conf,
+                "best_area_ratio": best_area_ratio,
+                "conf_th": self.rule.conf_th,
+                "min_area_ratio": self.rule.min_area_ratio,
+                "hit_window_sec": self.rule.hit_window_sec,
+            })
 
             # 9) 发给 UI 显示
             rgb = cv2.cvtColor(vis, cv2.COLOR_BGR2RGB)
@@ -295,7 +307,7 @@ class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("刀具检测预警系统")
-        self.resize(1100, 700)
+        self.resize(1280, 760)
 
         self.worker = None
         self.rule = RuleConfig()
@@ -380,6 +392,24 @@ class MainWindow(QWidget):
         self.device_label = QLabel("推理设备 [device: 0(GPU) 或 cpu]：")
         self.device_value = QLabel(self.rule.device)
 
+        # --- 运行信息
+        self.info_stage = QLabel("无")
+        self.info_frame = QLabel("0")
+        self.info_time = QLabel("0.00 s")
+        self.info_fps = QLabel("0.0")
+        self.info_infer = QLabel("0.0 ms")
+        self.info_raw = QLabel("0")
+        self.info_hit = QLabel("0")
+        self.info_hits = QLabel("0 / 0")
+        self.info_display_hits = QLabel("0")
+        self.info_trigger = QLabel("0")
+        self.info_cooldown = QLabel("0.0 s")
+        self.info_best_conf = QLabel("0.00")
+        self.info_best_area = QLabel("0.000")
+        self.info_conf_th = QLabel(f"{self.rule.conf_th:.2f}")
+        self.info_min_area = QLabel(f"{self.rule.min_area_ratio:.3f}")
+        self.info_window = QLabel(f"{self.rule.hit_window_sec:.1f} s")
+
         # --- 控制按钮
         self.btn_start = QPushButton("开始运行")
         self.btn_stop = QPushButton("停止运行")
@@ -418,13 +448,34 @@ class MainWindow(QWidget):
 
         cfg_box.setLayout(form)
 
+        info_box = QGroupBox("运行信息")
+        info_form = QFormLayout()
+        info_form.addRow(QLabel("当前阶段："), self.info_stage)
+        info_form.addRow(QLabel("当前帧："), self.info_frame)
+        info_form.addRow(QLabel("视频时间："), self.info_time)
+        info_form.addRow(QLabel("FPS："), self.info_fps)
+        info_form.addRow(QLabel("推理耗时："), self.info_infer)
+        info_form.addRow(QLabel("原始框数："), self.info_raw)
+        info_form.addRow(QLabel("本帧命中："), self.info_hit)
+        info_form.addRow(QLabel("累计命中："), self.info_hits)
+        info_form.addRow(QLabel("显示阈值："), self.info_display_hits)
+        info_form.addRow(QLabel("报警触发："), self.info_trigger)
+        info_form.addRow(QLabel("冷却剩余："), self.info_cooldown)
+        info_form.addRow(QLabel("当前置信度："), self.info_best_conf)
+        info_form.addRow(QLabel("当前面积占比："), self.info_best_area)
+        info_form.addRow(QLabel("当前 conf_th："), self.info_conf_th)
+        info_form.addRow(QLabel("当前最小面积占比："), self.info_min_area)
+        info_form.addRow(QLabel("当前统计窗口："), self.info_window)
+        info_box.setLayout(info_form)
+
         right = QVBoxLayout()
         right.addWidget(cfg_box)
+        right.addWidget(info_box)
         right.addStretch(1)
 
         root = QHBoxLayout()
         root.addLayout(left, 3)
-        root.addLayout(right, 1)
+        root.addLayout(right, 2)
         self.setLayout(root)
 
     def _hbox(self, *widgets):
@@ -477,6 +528,7 @@ class MainWindow(QWidget):
         self.worker.frame_signal.connect(self.on_frame)
         self.worker.status_signal.connect(self.on_status)
         self.worker.notify_signal.connect(self.on_notify)
+        self.worker.info_signal.connect(self.on_info)
         self.worker.stopped_signal.connect(self.on_stopped)
 
         self.btn_start.setEnabled(False)
@@ -496,6 +548,24 @@ class MainWindow(QWidget):
 
     def on_status(self, s: str):
         self.status.setText(s)
+
+    def on_info(self, info: dict):
+        self.info_stage.setText(str(info.get("stage", "无")))
+        self.info_frame.setText(str(info.get("frame_id", 0)))
+        self.info_time.setText(f'{info.get("time_sec", 0.0):.2f} s')
+        self.info_fps.setText(f'{info.get("fps", 0.0):.1f}')
+        self.info_infer.setText(f'{info.get("infer_ms", 0.0):.1f} ms')
+        self.info_raw.setText(str(info.get("raw_count", 0)))
+        self.info_hit.setText(str(info.get("hit_this_frame", 0)))
+        self.info_hits.setText(f'{info.get("hits", 0)} / {info.get("hits_required", 0)}')
+        self.info_display_hits.setText(str(info.get("display_hits_required", 0)))
+        self.info_trigger.setText(str(info.get("triggered", 0)))
+        self.info_cooldown.setText(f'{info.get("cooldown_left", 0.0):.1f} s')
+        self.info_best_conf.setText(f'{info.get("best_conf", 0.0):.2f}')
+        self.info_best_area.setText(f'{info.get("best_area_ratio", 0.0):.3f}')
+        self.info_conf_th.setText(f'{info.get("conf_th", 0.0):.2f}')
+        self.info_min_area.setText(f'{info.get("min_area_ratio", 0.0):.3f}')
+        self.info_window.setText(f'{info.get("hit_window_sec", 0.0):.1f} s')
 
     def on_notify(self, title: str, msg: str):
         # Windows 托盘通知（不阻塞、自动消失）
