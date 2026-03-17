@@ -26,6 +26,7 @@ import cv2
 # -----------------------------
 DEFAULT_MODEL_PATH = r"E:\User\ultralytics-8.3.241\runs\detect\yolov8m_150_no_copy_paste\weights\best.pt"
 DEFAULT_VIDEO_PATH = r"E:\User\ultralytics-8.3.241\video\video_1.mp4"
+DEFAULT_LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 
 # Windows 提示音（非阻塞）
 try:
@@ -51,6 +52,8 @@ from PyQt5.QtWidgets import (
     QFileDialog, QRadioButton, QButtonGroup, QSpinBox, QDoubleSpinBox,
     QGroupBox, QFormLayout, QMessageBox, QSystemTrayIcon, QComboBox, QGridLayout
 )
+
+from log_system import LogManager, LogViewerDialog
 
 
 class TrendChartWidget(QWidget):
@@ -345,6 +348,8 @@ class VideoWorker(QThread):
     info_signal = pyqtSignal(dict)             # 运行信息
     stopped_signal = pyqtSignal()
     finished_signal = pyqtSignal()
+    system_log_signal = pyqtSignal(str, str)
+    event_log_signal = pyqtSignal(dict)
 
     def __init__(self, model_path: str, source_mode: str, video_path: str, cam_index: int, rule: RuleConfig):
         super().__init__()
@@ -359,6 +364,12 @@ class VideoWorker(QThread):
         # hits 统计：保存最近窗口内的 hit 时间戳
         self.hit_times = deque()
         self.last_trigger_time = 0.0
+        self.prev_stage = "无"
+        self.total_hits = 0
+        self.total_triggers = 0
+        self.infer_sum_ms = 0.0
+        self.infer_max_ms = 0.0
+        self.run_start_time = ""
 
     def stop(self):
         self._stop_flag = True
@@ -392,17 +403,21 @@ class VideoWorker(QThread):
         return len(self.hit_times)
 
     def run(self):
+        self.run_start_time = time.strftime("%Y-%m-%d %H:%M:%S")
         # 1) 加载模型
         if not os.path.exists(self.model_path):
             self.status_signal.emit(f"模型不存在：{self.model_path}")
+            self.system_log_signal.emit("ERROR", f"模型不存在：{self.model_path}")
             self.stopped_signal.emit()
             self.finished_signal.emit()
             return
 
         try:
             model = YOLO(self.model_path)
+            self.system_log_signal.emit("INFO", f"模型加载成功：{self.model_path}")
         except Exception as e:
             self.status_signal.emit(f"模型加载失败：{e}")
+            self.system_log_signal.emit("ERROR", f"模型加载失败：{e}")
             self.stopped_signal.emit()
             self.finished_signal.emit()
             return
@@ -412,16 +427,20 @@ class VideoWorker(QThread):
             cap = cv2.VideoCapture(self.video_path)
             if not cap.isOpened():
                 self.status_signal.emit(f"视频打不开：{self.video_path}")
+                self.system_log_signal.emit("ERROR", f"视频打不开：{self.video_path}")
                 self.stopped_signal.emit()
                 self.finished_signal.emit()
                 return
+            self.system_log_signal.emit("INFO", f"视频打开成功：{self.video_path}")
         else:
             cap = cv2.VideoCapture(self.cam_index)
             if not cap.isOpened():
                 self.status_signal.emit(f"摄像头打不开：index={self.cam_index}")
+                self.system_log_signal.emit("ERROR", f"摄像头打不开：index={self.cam_index}")
                 self.stopped_signal.emit()
                 self.finished_signal.emit()
                 return
+            self.system_log_signal.emit("INFO", f"摄像头打开成功：index={self.cam_index}")
 
         fps = cap.get(cv2.CAP_PROP_FPS)
         if fps <= 1e-3:
@@ -453,8 +472,12 @@ class VideoWorker(QThread):
                 )
             except Exception as e:
                 self.status_signal.emit(f"推理失败：{e}")
+                self.system_log_signal.emit("ERROR", f"推理失败：{e}")
                 break
             infer_ms = (time.time() - t_infer0) * 1000.0
+            self.infer_sum_ms += infer_ms
+            if infer_ms > self.infer_max_ms:
+                self.infer_max_ms = infer_ms
 
             # 4) 从结果里找“本帧最可信的候选框”
             best = None  # (conf, xyxy, cls)
@@ -484,6 +507,7 @@ class VideoWorker(QThread):
             hit_this_frame = 1 if best is not None else 0
             if hit_this_frame:
                 self._push_hit(now)
+                self.total_hits += 1
 
             hits = self._hit_count(now)
 
@@ -492,6 +516,7 @@ class VideoWorker(QThread):
             if hits >= self.rule.hits_required and (not self._within_cooldown(now)):
                 triggered = 1
                 self.last_trigger_time = now
+                self.total_triggers += 1
 
                 # 非阻塞提示：托盘气泡 + 音效
                 if self.rule.enable_notify:
@@ -541,6 +566,37 @@ class VideoWorker(QThread):
 
             cooldown_left = max(0.0, self.rule.cooldown_sec - (now - self.last_trigger_time))
 
+            if stage != self.prev_stage:
+                self.system_log_signal.emit("INFO", f"阶段变化：frame={frame_id}，{self.prev_stage} -> {stage}")
+                self.event_log_signal.emit({
+                    "time_str": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "event_type": f"stage_{stage}",
+                    "frame_id": frame_id,
+                    "stage": stage,
+                    "best_conf": f"{best_conf:.4f}",
+                    "hits": hits,
+                    "hits_required": self.rule.hits_required,
+                    "source_mode": self.source_mode,
+                    "video_path": self.video_path,
+                    "cam_index": self.cam_index
+                })
+                self.prev_stage = stage
+
+            if triggered == 1:
+                self.system_log_signal.emit("WARNING", f"报警触发：frame={frame_id}，conf={best_conf:.4f}，hits={hits}/{self.rule.hits_required}")
+                self.event_log_signal.emit({
+                    "time_str": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "event_type": "triggered",
+                    "frame_id": frame_id,
+                    "stage": stage,
+                    "best_conf": f"{best_conf:.4f}",
+                    "hits": hits,
+                    "hits_required": self.rule.hits_required,
+                    "source_mode": self.source_mode,
+                    "video_path": self.video_path,
+                    "cam_index": self.cam_index
+                })
+
             self.info_signal.emit({
                 "stage": stage,
                 "frame_id": frame_id,
@@ -565,8 +621,21 @@ class VideoWorker(QThread):
 
         cap.release()
         self.status_signal.emit("已停止")
-        self.stopped_signal.emit()
+        self.system_log_signal.emit("INFO", f"运行结束：总帧数={frame_id}，总命中={self.total_hits}，总报警={self.total_triggers}")
         self.finished_signal.emit()
+        self.stopped_signal.emit()
+        self.event_log_signal.emit({
+            "time_str": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "event_type": "run_finished",
+            "frame_id": frame_id,
+            "stage": self.prev_stage,
+            "best_conf": "",
+            "hits": self.total_hits,
+            "hits_required": self.rule.hits_required,
+            "source_mode": self.source_mode,
+            "video_path": self.video_path,
+            "cam_index": self.cam_index
+        })
 
 
 class MainWindow(QWidget):
@@ -579,6 +648,18 @@ class MainWindow(QWidget):
         self.rule = RuleConfig()
         self.camera_scan_range = 6
         self.available_cameras = {}
+        self.log_dir = DEFAULT_LOG_DIR
+        self.log_manager = LogManager(self.log_dir)
+        self.log_viewer = LogViewerDialog(self)
+        self.log_manager.set_viewer(self.log_viewer)
+        self.run_start_time = ""
+        self.run_stats = {
+            "total_frames": 0,
+            "infer_sum_ms": 0.0,
+            "infer_max_ms": 0.0,
+            "total_hits": 0,
+            "total_triggers": 0
+        }
 
         # --- 初始化界面模块
         self._init_tray()
@@ -592,6 +673,8 @@ class MainWindow(QWidget):
         self._set_compact_widget_widths()
         self._build_layout()
         self._scan_cameras_on_startup()
+
+        self.log_manager.info("程序启动完成")
 
     # -----------------------------
     # 模块一：托盘通知
@@ -632,6 +715,10 @@ class MainWindow(QWidget):
         self.video_path_label = QLabel(DEFAULT_VIDEO_PATH)
         self.btn_pick_video = QPushButton("选择视频文件")
         self.btn_pick_video.clicked.connect(self.pick_video)
+
+        self.log_dir_label = QLabel(self.log_dir)
+        self.btn_pick_log_dir = QPushButton("设置日志目录")
+        self.btn_pick_log_dir.clicked.connect(self.pick_log_dir)
 
     # -----------------------------
     # 模块五：输入源选择
@@ -729,9 +816,11 @@ class MainWindow(QWidget):
         # --- 控制按钮
         self.btn_start = QPushButton("开始运行")
         self.btn_stop = QPushButton("停止运行")
+        self.btn_view_log = QPushButton("查看日志")
         self.btn_stop.setEnabled(False)
         self.btn_start.clicked.connect(self.start)
         self.btn_stop.clicked.connect(self.stop)
+        self.btn_view_log.clicked.connect(self.show_log_viewer)
 
     # -----------------------------
     # 模块九：控件宽度
@@ -740,6 +829,8 @@ class MainWindow(QWidget):
         self.btn_pick_video.setFixedWidth(150)
         self.btn_scan_camera.setFixedWidth(150)
         self.btn_pick_model.setFixedWidth(220)
+        self.btn_pick_log_dir.setFixedWidth(150)
+        self.btn_view_log.setFixedWidth(120)
 
         self.cam_select.setFixedWidth(220)
         self.device_select.setFixedWidth(220)
@@ -764,6 +855,8 @@ class MainWindow(QWidget):
         top_form = QFormLayout()
         top_form.addRow(QLabel("模型路径："), self.model_path_label)
         top_form.addRow(self.btn_pick_model)
+        top_form.addRow(QLabel("日志目录："), self.log_dir_label)
+        top_form.addRow(self.btn_pick_log_dir)
         top_form.addRow(QLabel("输入源："), self._hbox(self.rb_video, self.rb_cam))
         top_form.addRow(QLabel("视频路径："), self.video_path_label)
         top_form.addRow(QLabel("操作："), self._hbox(self.btn_pick_video, self.btn_scan_camera))
@@ -846,7 +939,7 @@ class MainWindow(QWidget):
         cfg_layout = QVBoxLayout()
         cfg_layout.addLayout(top_form)
         cfg_layout.addLayout(middle)
-        cfg_layout.addWidget(self._hbox(self.btn_start, self.btn_stop))
+        cfg_layout.addWidget(self._hbox(self.btn_start, self.btn_stop, self.btn_view_log))
         cfg_layout.addWidget(visual_box)
         cfg_box.setLayout(cfg_layout)
 
@@ -866,17 +959,22 @@ class MainWindow(QWidget):
         self.available_cameras = {}
         self.cam_select.clear()
 
+        available_list = []
         for idx in range(self.camera_scan_range):
             ok = self._test_camera_index(idx)
             self.available_cameras[idx] = ok
             cam_text = f"{'🟢' if ok else '🔴'} 摄像头 {idx}"
             self.cam_select.addItem(cam_text, idx)
+            if ok:
+                available_list.append(str(idx))
 
         if self.cam_select.count() == 0:
             self.cam_select.addItem("无可用摄像头", -1)
             self.status.setText("未扫描到可用摄像头")
+            self.log_manager.warning("未扫描到可用摄像头")
         else:
             self.status.setText("摄像头扫描完成")
+            self.log_manager.info(f"摄像头扫描完成，可用摄像头：{', '.join(available_list) if available_list else '无'}")
 
     def _test_camera_index(self, idx: int) -> bool:
         cap = cv2.VideoCapture(idx)
@@ -918,11 +1016,36 @@ class MainWindow(QWidget):
         path, _ = QFileDialog.getOpenFileName(self, "选择模型文件", os.path.dirname(DEFAULT_MODEL_PATH), "PyTorch (*.pt)")
         if path:
             self.model_path_label.setText(path)
+            self.log_manager.info(f"选择模型文件：{path}")
 
     def pick_video(self):
         path, _ = QFileDialog.getOpenFileName(self, "选择视频文件", os.path.dirname(DEFAULT_VIDEO_PATH), "Video (*.mp4 *.avi *.mkv *.mov)")
         if path:
             self.video_path_label.setText(path)
+            self.log_manager.info(f"选择视频文件：{path}")
+
+    def pick_log_dir(self):
+        path = QFileDialog.getExistingDirectory(self, "选择日志保存目录", self.log_dir)
+        if path:
+            self.log_dir = path
+            self.log_dir_label.setText(path)
+            self.log_manager.set_log_dir(path)
+            self.log_manager.info(f"日志目录已设置为：{path}")
+
+    def show_log_viewer(self):
+        self.log_viewer.show()
+        self.log_viewer.raise_()
+        self.log_viewer.activateWindow()
+
+    def _reset_run_stats(self):
+        self.run_start_time = time.strftime("%Y-%m-%d %H:%M:%S")
+        self.run_stats = {
+            "total_frames": 0,
+            "infer_sum_ms": 0.0,
+            "infer_max_ms": 0.0,
+            "total_hits": 0,
+            "total_triggers": 0
+        }
 
     def start(self):
         if self.worker is not None:
@@ -948,11 +1071,13 @@ class MainWindow(QWidget):
             )
             self.device_select.setCurrentIndex(1)
             selected_device = "cpu"
+            self.log_manager.warning("当前环境未检测到可用 CUDA，系统自动回退为 CPU")
         self.rule.device = selected_device
 
         model_path = self.model_path_label.text().strip()
         if not model_path:
             QMessageBox.warning(self, "提示", "请先选择模型文件")
+            self.log_manager.warning("开始运行失败：未选择模型文件")
             return
 
         source_mode = "video" if self.rb_video.isChecked() else "camera"
@@ -961,11 +1086,13 @@ class MainWindow(QWidget):
 
         if source_mode == "video" and (not video_path or not os.path.exists(video_path)):
             QMessageBox.warning(self, "提示", "视频路径无效，请重新选择视频文件")
+            self.log_manager.warning("开始运行失败：视频路径无效")
             return
 
         if source_mode == "camera":
             if cam_index < 0:
                 QMessageBox.warning(self, "提示", "当前没有可用摄像头，请先重新扫描。")
+                self.log_manager.warning("开始运行失败：没有可用摄像头")
                 return
 
             ok = self._test_camera_index(cam_index)
@@ -976,9 +1103,19 @@ class MainWindow(QWidget):
                     f"摄像头 {cam_index} 当前不可用或取帧异常。\n请重新扫描后选择其他可用摄像头。"
                 )
                 self._scan_cameras_on_startup()
+                self.log_manager.warning(f"开始运行失败：摄像头 {cam_index} 当前不可用")
                 return
 
         self._reset_visual_widgets()
+        self._reset_run_stats()
+        self.log_manager.start_new_run()
+        self.log_manager.info("开始运行")
+        self.log_manager.info(f"输入源：{source_mode}")
+        self.log_manager.info(f"模型路径：{model_path}")
+        if source_mode == "video":
+            self.log_manager.info(f"视频路径：{video_path}")
+        else:
+            self.log_manager.info(f"摄像头索引：{cam_index}")
 
         self.worker = VideoWorker(model_path, source_mode, video_path, cam_index, self.rule)
         self.worker.frame_signal.connect(self.on_frame)
@@ -987,6 +1124,8 @@ class MainWindow(QWidget):
         self.worker.info_signal.connect(self.on_info)
         self.worker.stopped_signal.connect(self.on_stopped)
         self.worker.finished_signal.connect(self.on_worker_finished)
+        self.worker.system_log_signal.connect(self.on_system_log)
+        self.worker.event_log_signal.connect(self.on_event_log)
 
         self.btn_start.setEnabled(False)
         self.btn_stop.setEnabled(True)
@@ -1001,6 +1140,7 @@ class MainWindow(QWidget):
             self.worker.stop()
             self.btn_stop.setEnabled(False)
             self.status.setText("停止中...")
+            self.log_manager.info("收到停止请求")
 
     def on_frame(self, qimg: QImage):
         # 自适应缩放
@@ -1009,6 +1149,19 @@ class MainWindow(QWidget):
 
     def on_status(self, s: str):
         self.status.setText(s)
+
+    def on_system_log(self, level: str, message: str):
+        if level == "INFO":
+            self.log_manager.info(message)
+        elif level == "WARNING":
+            self.log_manager.warning(message)
+        elif level == "ERROR":
+            self.log_manager.error(message)
+        else:
+            self.log_manager.log(level, message)
+
+    def on_event_log(self, row: dict):
+        self.log_manager.event(row)
 
     def on_info(self, info: dict):
         self.info_frame.setText(str(info.get("frame_id", 0)))
@@ -1028,6 +1181,12 @@ class MainWindow(QWidget):
             info.get("triggered", 0)
         )
 
+        self.run_stats["total_frames"] = int(info.get("frame_id", 0))
+        self.run_stats["infer_sum_ms"] += float(info.get("infer_ms", 0.0))
+        self.run_stats["infer_max_ms"] = max(self.run_stats["infer_max_ms"], float(info.get("infer_ms", 0.0)))
+        self.run_stats["total_hits"] += int(info.get("hit_this_frame", 0))
+        self.run_stats["total_triggers"] += int(info.get("triggered", 0))
+
     def on_notify(self, title: str, msg: str):
         # Windows 托盘通知（不阻塞、自动消失）
         try:
@@ -1036,16 +1195,59 @@ class MainWindow(QWidget):
             pass
 
     def on_stopped(self):
-        self.btn_start.setEnabled(False)
-        self.btn_stop.setEnabled(False)
+        pass
 
     def on_worker_finished(self):
+        model_path = self.model_path_label.text().strip()
+        source_mode = "video" if self.rb_video.isChecked() else "camera"
+        video_path = self.video_path_label.text().strip()
+        cam_index = int(self.cam_select.currentData()) if self.cam_select.count() > 0 else -1
+
+        total_frames = self.run_stats["total_frames"]
+        avg_infer_ms = self.run_stats["infer_sum_ms"] / total_frames if total_frames > 0 else 0.0
+
+        self.log_manager.summary({
+            "run_start_time": self.run_start_time,
+            "run_end_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "model_path": model_path,
+            "source_mode": source_mode,
+            "video_path": video_path,
+            "cam_index": cam_index,
+            "conf_th": self.rule.conf_th,
+            "hits_required": self.rule.hits_required,
+            "display_hits_required": self.rule.display_hits_required,
+            "hit_window_sec": self.rule.hit_window_sec,
+            "min_area_ratio": self.rule.min_area_ratio,
+            "cooldown_sec": self.rule.cooldown_sec,
+            "imgsz": self.rule.imgsz,
+            "iou": self.rule.iou,
+            "device": self.rule.device,
+            "total_frames": total_frames,
+            "avg_infer_ms": f"{avg_infer_ms:.4f}",
+            "max_infer_ms": f"{self.run_stats['infer_max_ms']:.4f}",
+            "total_hits": self.run_stats["total_hits"],
+            "total_triggers": self.run_stats["total_triggers"]
+        })
+
+        self.log_manager.info("运行汇总已写入 summary.csv")
+
         if self.worker:
             self.worker.wait()
             self.worker.deleteLater()
             self.worker = None
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
+
+    def closeEvent(self, event):
+        try:
+            if self.worker:
+                self.worker.stop()
+                self.worker.wait()
+            self.log_manager.info("程序退出")
+            self.log_manager.stop()
+        except Exception:
+            pass
+        event.accept()
 
 
 def main():

@@ -199,3 +199,6 @@ calibration_*.npy
 *.heic
 *.ico
 *.raw
+py_text/log/run_summary.csv
+py_text/log/event_20260317_225713.csv
+*.csv
