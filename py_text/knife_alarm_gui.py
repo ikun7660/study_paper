@@ -34,6 +34,12 @@ try:
 except Exception:
     HAS_WINSOUND = False
 
+try:
+    import torch
+    HAS_CUDA = bool(torch.cuda.is_available())
+except Exception:
+    HAS_CUDA = False
+
 # ultralytics
 from ultralytics import YOLO
 
@@ -43,7 +49,7 @@ from PyQt5.QtGui import QImage, QPixmap, QIcon
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout,
     QFileDialog, QRadioButton, QButtonGroup, QSpinBox, QDoubleSpinBox,
-    QGroupBox, QFormLayout, QMessageBox, QSystemTrayIcon
+    QGroupBox, QFormLayout, QMessageBox, QSystemTrayIcon, QComboBox, QGridLayout
 )
 
 
@@ -284,16 +290,13 @@ class VideoWorker(QThread):
                 "stage": stage,
                 "best_conf": best_conf,
                 "best_area_ratio": best_area_ratio,
-                "conf_th": self.rule.conf_th,
-                "min_area_ratio": self.rule.min_area_ratio,
-                "hit_window_sec": self.rule.hit_window_sec,
             })
 
             # 9) 发给 UI 显示
             rgb = cv2.cvtColor(vis, cv2.COLOR_BGR2RGB)
             qimg = QImage(rgb.data, rgb.shape[1], rgb.shape[0], rgb.strides[0], QImage.Format_RGB888)
             self.frame_signal.emit(qimg.copy())
-            self.status_signal.emit(f"运行中：帧={frame_id}，原始框数={raw_count}，本帧命中={hit_this_frame}，命中次数={hits}，报警触发={triggered}，阶段={stage}")
+            self.status_signal.emit("运行中")
 
             # 控制一下线程节奏（让 UI 更丝滑）
             self.msleep(1)
@@ -307,7 +310,7 @@ class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("刀具检测预警系统")
-        self.resize(1280, 760)
+        self.resize(1180, 700)
 
         self.worker = None
         self.rule = RuleConfig()
@@ -320,7 +323,7 @@ class MainWindow(QWidget):
         # --- 画面显示
         self.video_label = QLabel("点击开始后显示画面")
         self.video_label.setAlignment(Qt.AlignCenter)
-        self.video_label.setMinimumSize(800, 500)
+        self.video_label.setMinimumSize(720, 440)
         self.video_label.setStyleSheet("background:#111; color:#ddd; border:1px solid #333;")
 
         # --- 状态
@@ -344,9 +347,10 @@ class MainWindow(QWidget):
         self.btn_pick_video = QPushButton("选择视频文件")
         self.btn_pick_video.clicked.connect(self.pick_video)
 
-        self.cam_index = QSpinBox()
-        self.cam_index.setRange(0, 10)
-        self.cam_index.setValue(0)
+        self.cam_select = QComboBox()
+        self.cam_select.addItem("摄像头 0", 0)
+        self.cam_select.addItem("摄像头 1", 1)
+        self.cam_select.addItem("摄像头 2", 2)
 
         # --- 规则参数
         self.conf_th = QDoubleSpinBox()
@@ -389,8 +393,14 @@ class MainWindow(QWidget):
         self.iou.setSingleStep(0.05)
         self.iou.setValue(self.rule.iou)
 
-        self.device_label = QLabel("推理设备 [device: 0(GPU) 或 cpu]：")
-        self.device_value = QLabel(self.rule.device)
+        self.device_label = QLabel("推理设备：")
+        self.device_select = QComboBox()
+        self.device_select.addItem("GPU (device=0)", "0")
+        self.device_select.addItem("CPU", "cpu")
+        if HAS_CUDA:
+            self.device_select.setCurrentIndex(0)
+        else:
+            self.device_select.setCurrentIndex(1)
 
         # --- 运行信息
         self.info_stage = QLabel("无")
@@ -406,9 +416,6 @@ class MainWindow(QWidget):
         self.info_cooldown = QLabel("0.0 s")
         self.info_best_conf = QLabel("0.00")
         self.info_best_area = QLabel("0.000")
-        self.info_conf_th = QLabel(f"{self.rule.conf_th:.2f}")
-        self.info_min_area = QLabel(f"{self.rule.min_area_ratio:.3f}")
-        self.info_window = QLabel(f"{self.rule.hit_window_sec:.1f} s")
 
         # --- 控制按钮
         self.btn_start = QPushButton("开始运行")
@@ -431,42 +438,62 @@ class MainWindow(QWidget):
         form.addRow(QLabel("输入源："), self._hbox(self.rb_video, self.rb_cam))
         form.addRow(QLabel("视频路径："), self.video_path_label)
         form.addRow(self.btn_pick_video)
-        form.addRow(QLabel("摄像头索引："), self.cam_index)
+        form.addRow(QLabel("摄像头选择："), self.cam_select)
 
-        form.addRow(QLabel("置信度阈值 ："), self.conf_th)
-        form.addRow(QLabel("报警命中次数 ："), self.hits_required)
-        form.addRow(QLabel("显示命中次数 ："), self.display_hits_required)
-        form.addRow(QLabel("统计窗口 ："), self.hit_window_sec)
-        form.addRow(QLabel("最小面积占比 ："), self.min_area_ratio)
-        form.addRow(QLabel("冷却时间 ："), self.cooldown_sec)
+        form.addRow(QLabel("置信度阈值："), self.conf_th)
+        form.addRow(QLabel("报警命中次数："), self.hits_required)
+        form.addRow(QLabel("显示命中次数："), self.display_hits_required)
+        form.addRow(QLabel("统计窗口："), self.hit_window_sec)
+        form.addRow(QLabel("最小面积占比："), self.min_area_ratio)
+        form.addRow(QLabel("冷却时间："), self.cooldown_sec)
 
-        form.addRow(QLabel("输入尺寸 ："), self.imgsz)
-        form.addRow(QLabel("NMS IoU 阈值 ："), self.iou)
-        form.addRow(self.device_label, self.device_value)
+        form.addRow(QLabel("输入尺寸："), self.imgsz)
+        form.addRow(QLabel("NMS IoU 阈值："), self.iou)
+        form.addRow(self.device_label, self.device_select)
 
         form.addRow(self._hbox(self.btn_start, self.btn_stop))
 
         cfg_box.setLayout(form)
 
         info_box = QGroupBox("运行信息")
-        info_form = QFormLayout()
-        info_form.addRow(QLabel("当前阶段："), self.info_stage)
-        info_form.addRow(QLabel("当前帧："), self.info_frame)
-        info_form.addRow(QLabel("视频时间："), self.info_time)
-        info_form.addRow(QLabel("FPS："), self.info_fps)
-        info_form.addRow(QLabel("推理耗时："), self.info_infer)
-        info_form.addRow(QLabel("原始框数："), self.info_raw)
-        info_form.addRow(QLabel("本帧命中："), self.info_hit)
-        info_form.addRow(QLabel("累计命中："), self.info_hits)
-        info_form.addRow(QLabel("显示阈值："), self.info_display_hits)
-        info_form.addRow(QLabel("报警触发："), self.info_trigger)
-        info_form.addRow(QLabel("冷却剩余："), self.info_cooldown)
-        info_form.addRow(QLabel("当前置信度："), self.info_best_conf)
-        info_form.addRow(QLabel("当前面积占比："), self.info_best_area)
-        info_form.addRow(QLabel("当前 conf_th："), self.info_conf_th)
-        info_form.addRow(QLabel("当前最小面积占比："), self.info_min_area)
-        info_form.addRow(QLabel("当前统计窗口："), self.info_window)
-        info_box.setLayout(info_form)
+        info_grid = QGridLayout()
+        info_grid.setHorizontalSpacing(18)
+        info_grid.setVerticalSpacing(6)
+
+        info_grid.addWidget(QLabel("阶段："), 0, 0)
+        info_grid.addWidget(self.info_stage, 0, 1)
+        info_grid.addWidget(QLabel("原始框数："), 0, 2)
+        info_grid.addWidget(self.info_raw, 0, 3)
+
+        info_grid.addWidget(QLabel("当前帧："), 1, 0)
+        info_grid.addWidget(self.info_frame, 1, 1)
+        info_grid.addWidget(QLabel("视频时间："), 1, 2)
+        info_grid.addWidget(self.info_time, 1, 3)
+
+        info_grid.addWidget(QLabel("FPS："), 2, 0)
+        info_grid.addWidget(self.info_fps, 2, 1)
+        info_grid.addWidget(QLabel("推理耗时："), 2, 2)
+        info_grid.addWidget(self.info_infer, 2, 3)
+
+        info_grid.addWidget(QLabel("本帧命中："), 3, 0)
+        info_grid.addWidget(self.info_hit, 3, 1)
+        info_grid.addWidget(QLabel("累计命中："), 3, 2)
+        info_grid.addWidget(self.info_hits, 3, 3)
+
+        info_grid.addWidget(QLabel("显示阈值："), 4, 0)
+        info_grid.addWidget(self.info_display_hits, 4, 1)
+        info_grid.addWidget(QLabel("报警触发："), 4, 2)
+        info_grid.addWidget(self.info_trigger, 4, 3)
+
+        info_grid.addWidget(QLabel("冷却剩余："), 5, 0)
+        info_grid.addWidget(self.info_cooldown, 5, 1)
+        info_grid.addWidget(QLabel("当前置信度："), 5, 2)
+        info_grid.addWidget(self.info_best_conf, 5, 3)
+
+        info_grid.addWidget(QLabel("当前面积占比："), 6, 0)
+        info_grid.addWidget(self.info_best_area, 6, 1)
+
+        info_box.setLayout(info_grid)
 
         right = QVBoxLayout()
         right.addWidget(cfg_box)
@@ -511,6 +538,17 @@ class MainWindow(QWidget):
         self.rule.iou = float(self.iou.value())
         self.rule.display_hits_required = min(self.rule.display_hits_required, self.rule.hits_required)
 
+        selected_device = self.device_select.currentData()
+        if selected_device == "0" and (not HAS_CUDA):
+            QMessageBox.information(
+                self,
+                "提示",
+                "你选择了 GPU (device=0)，但当前环境未检测到可用 CUDA。\n系统将自动回退为 CPU 继续运行。"
+            )
+            self.device_select.setCurrentIndex(1)
+            selected_device = "cpu"
+        self.rule.device = selected_device
+
         model_path = self.model_path_label.text().strip()
         if not model_path:
             QMessageBox.warning(self, "提示", "请先选择模型文件")
@@ -518,11 +556,19 @@ class MainWindow(QWidget):
 
         source_mode = "video" if self.rb_video.isChecked() else "camera"
         video_path = self.video_path_label.text().strip()
-        cam_index = int(self.cam_index.value())
+        cam_index = int(self.cam_select.currentData())
 
         if source_mode == "video" and (not video_path or not os.path.exists(video_path)):
             QMessageBox.warning(self, "提示", "视频路径无效，请重新选择视频文件")
             return
+
+        if source_mode == "camera":
+            cap_test = cv2.VideoCapture(cam_index)
+            ok = cap_test.isOpened()
+            cap_test.release()
+            if not ok:
+                QMessageBox.warning(self, "提示", f"摄像头 {cam_index} 当前打不开，请更换其他摄像头选项。")
+                return
 
         self.worker = VideoWorker(model_path, source_mode, video_path, cam_index, self.rule)
         self.worker.frame_signal.connect(self.on_frame)
@@ -533,7 +579,10 @@ class MainWindow(QWidget):
 
         self.btn_start.setEnabled(False)
         self.btn_stop.setEnabled(True)
-        self.status.setText("启动中...")
+        if self.rule.device == "0":
+            self.status.setText("启动中... 当前设备：GPU (device=0)")
+        else:
+            self.status.setText("启动中... 当前设备：CPU")
         self.worker.start()
 
     def stop(self):
@@ -563,9 +612,6 @@ class MainWindow(QWidget):
         self.info_cooldown.setText(f'{info.get("cooldown_left", 0.0):.1f} s')
         self.info_best_conf.setText(f'{info.get("best_conf", 0.0):.2f}')
         self.info_best_area.setText(f'{info.get("best_area_ratio", 0.0):.3f}')
-        self.info_conf_th.setText(f'{info.get("conf_th", 0.0):.2f}')
-        self.info_min_area.setText(f'{info.get("min_area_ratio", 0.0):.3f}')
-        self.info_window.setText(f'{info.get("hit_window_sec", 0.0):.1f} s')
 
     def on_notify(self, title: str, msg: str):
         # Windows 托盘通知（不阻塞、自动消失）
