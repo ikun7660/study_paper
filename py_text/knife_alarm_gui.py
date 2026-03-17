@@ -57,7 +57,7 @@ from PyQt5.QtWidgets import (
 class RuleConfig:
     # 规则阈值
     conf_th: float = 0.70          # 置信度阈值（命中阈值）
-    hits_required: int = 5        # 命中需要的 hit 数（连续/累计窗口内）
+    hits_required: int = 15        # 命中需要的 hit 数（连续/累计窗口内）
     hit_window_sec: float = 1.0    # 统计窗口（秒）
     min_area_ratio: float = 0.00   # 最小框面积比例（框面积/图像面积），过滤小噪点框
     cooldown_sec: float = 1.0      # 触发后冷却时间（秒），防止连发
@@ -70,7 +70,7 @@ class RuleConfig:
     max_det: int = 300
 
     # 分级显示
-    display_hits_required: int = 2 # 正式显示命中框所需的 hit 数
+    display_hits_required: int = 10 # 正式显示命中框所需的 hit 数
 
     # 提示
     enable_sound: bool = True
@@ -276,6 +276,7 @@ class VideoWorker(QThread):
             cooldown_left = max(0.0, self.rule.cooldown_sec - (now - self.last_trigger_time))
 
             self.info_signal.emit({
+                "stage": stage,
                 "frame_id": frame_id,
                 "fps": fps,
                 "infer_ms": infer_ms,
@@ -489,30 +490,28 @@ class MainWindow(QWidget):
         left.addWidget(self.status)
 
         cfg_box = QGroupBox("参数配置")
-        form = QFormLayout()
 
-        form.addRow(QLabel("模型路径："), self.model_path_label)
-        form.addRow(self.btn_pick_model)
+        top_form = QFormLayout()
+        top_form.addRow(QLabel("模型路径："), self.model_path_label)
+        top_form.addRow(self.btn_pick_model)
+        top_form.addRow(QLabel("输入源："), self._hbox(self.rb_video, self.rb_cam))
+        top_form.addRow(QLabel("视频路径："), self.video_path_label)
+        top_form.addRow(QLabel("操作："), self._hbox(self.btn_pick_video, self.btn_scan_camera))
 
-        form.addRow(QLabel("输入源："), self._hbox(self.rb_video, self.rb_cam))
-        form.addRow(QLabel("视频路径："), self.video_path_label)
-        form.addRow(QLabel("操作："), self._hbox(self.btn_pick_video, self.btn_scan_camera))
-        form.addRow(QLabel("摄像头选择："), self.cam_select)
+        param_form = QFormLayout()
+        param_form.addRow(QLabel("摄像头选择："), self.cam_select)
+        param_form.addRow(QLabel("置信度阈值："), self.conf_th)
+        param_form.addRow(QLabel("报警命中次数："), self.hits_required)
+        param_form.addRow(QLabel("显示命中次数："), self.display_hits_required)
+        param_form.addRow(QLabel("统计窗口："), self.hit_window_sec)
+        param_form.addRow(QLabel("最小面积占比："), self.min_area_ratio)
+        param_form.addRow(QLabel("冷却时间："), self.cooldown_sec)
+        param_form.addRow(QLabel("输入尺寸："), self.imgsz)
+        param_form.addRow(QLabel("NMS IoU 阈值："), self.iou)
+        param_form.addRow(self.device_label, self.device_select)
 
-        form.addRow(QLabel("置信度阈值："), self.conf_th)
-        form.addRow(QLabel("报警命中次数："), self.hits_required)
-        form.addRow(QLabel("显示命中次数："), self.display_hits_required)
-        form.addRow(QLabel("统计窗口："), self.hit_window_sec)
-        form.addRow(QLabel("最小面积占比："), self.min_area_ratio)
-        form.addRow(QLabel("冷却时间："), self.cooldown_sec)
-
-        form.addRow(QLabel("输入尺寸："), self.imgsz)
-        form.addRow(QLabel("NMS IoU 阈值："), self.iou)
-        form.addRow(self.device_label, self.device_select)
-
-        form.addRow(self._hbox(self.btn_start, self.btn_stop))
-
-        cfg_box.setLayout(form)
+        param_widget = QWidget()
+        param_widget.setLayout(param_form)
 
         info_box = QGroupBox("运行信息")
         info_grid = QGridLayout()
@@ -544,9 +543,18 @@ class MainWindow(QWidget):
 
         info_box.setLayout(info_grid)
 
+        middle = QHBoxLayout()
+        middle.addWidget(param_widget, 1)
+        middle.addWidget(info_box, 1)
+
+        cfg_layout = QVBoxLayout()
+        cfg_layout.addLayout(top_form)
+        cfg_layout.addLayout(middle)
+        cfg_layout.addWidget(self._hbox(self.btn_start, self.btn_stop))
+        cfg_box.setLayout(cfg_layout)
+
         right = QVBoxLayout()
         right.addWidget(cfg_box)
-        right.addWidget(info_box)
         right.addStretch(1)
 
         root = QHBoxLayout()
