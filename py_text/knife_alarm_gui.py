@@ -310,31 +310,69 @@ class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("刀具检测预警系统")
-        self.resize(1180, 700)
+        self.resize(1180, 760)
 
         self.worker = None
         self.rule = RuleConfig()
+        self.camera_scan_range = 6
+        self.available_cameras = {}
 
+        # --- 初始化界面模块
+        self._init_tray()
+        self._init_video_area()
+        self._init_status_area()
+        self._init_path_widgets()
+        self._init_source_widgets()
+        self._init_rule_widgets()
+        self._init_runtime_widgets()
+        self._init_control_widgets()
+        self._build_layout()
+        self._scan_cameras_on_startup()
+
+    # -----------------------------
+    # 模块一：托盘通知
+    # -----------------------------
+    def _init_tray(self):
         # --- 托盘通知（Windows 风格，不阻塞，自动消失）
         self.tray = QSystemTrayIcon(self)
         self.tray.setIcon(self.style().standardIcon(self.style().SP_MessageBoxWarning))
         self.tray.setVisible(True)
 
+    # -----------------------------
+    # 模块二：视频显示区域
+    # -----------------------------
+    def _init_video_area(self):
         # --- 画面显示
         self.video_label = QLabel("点击开始后显示画面")
         self.video_label.setAlignment(Qt.AlignCenter)
         self.video_label.setMinimumSize(720, 440)
         self.video_label.setStyleSheet("background:#111; color:#ddd; border:1px solid #333;")
 
+    # -----------------------------
+    # 模块三：状态栏
+    # -----------------------------
+    def _init_status_area(self):
         # --- 状态
         self.status = QLabel("就绪")
         self.status.setStyleSheet("color:#333;")
 
+    # -----------------------------
+    # 模块四：路径选择
+    # -----------------------------
+    def _init_path_widgets(self):
         # --- 模型路径（方式2：界面选择）
         self.model_path_label = QLabel(DEFAULT_MODEL_PATH)
         self.btn_pick_model = QPushButton("选择模型文件 best.pt")
         self.btn_pick_model.clicked.connect(self.pick_model)
 
+        self.video_path_label = QLabel(DEFAULT_VIDEO_PATH)
+        self.btn_pick_video = QPushButton("选择视频文件")
+        self.btn_pick_video.clicked.connect(self.pick_video)
+
+    # -----------------------------
+    # 模块五：输入源选择
+    # -----------------------------
+    def _init_source_widgets(self):
         # --- 输入源选择
         self.rb_video = QRadioButton("视频文件")
         self.rb_cam = QRadioButton("摄像头")
@@ -343,15 +381,21 @@ class MainWindow(QWidget):
         self.source_group.addButton(self.rb_video)
         self.source_group.addButton(self.rb_cam)
 
-        self.video_path_label = QLabel(DEFAULT_VIDEO_PATH)
-        self.btn_pick_video = QPushButton("选择视频文件")
-        self.btn_pick_video.clicked.connect(self.pick_video)
-
         self.cam_select = QComboBox()
-        self.cam_select.addItem("摄像头 0", 0)
-        self.cam_select.addItem("摄像头 1", 1)
-        self.cam_select.addItem("摄像头 2", 2)
 
+        self.btn_scan_camera = QPushButton("重新扫描摄像头")
+        self.btn_scan_camera.clicked.connect(self._scan_cameras_on_startup)
+
+        self.cam_status_box = QWidget()
+        self.cam_status_layout = QHBoxLayout()
+        self.cam_status_layout.setContentsMargins(0, 0, 0, 0)
+        self.cam_status_layout.setSpacing(8)
+        self.cam_status_box.setLayout(self.cam_status_layout)
+
+    # -----------------------------
+    # 模块六：规则参数
+    # -----------------------------
+    def _init_rule_widgets(self):
         # --- 规则参数
         self.conf_th = QDoubleSpinBox()
         self.conf_th.setRange(0.0, 1.0)
@@ -402,6 +446,10 @@ class MainWindow(QWidget):
         else:
             self.device_select.setCurrentIndex(1)
 
+    # -----------------------------
+    # 模块七：运行信息
+    # -----------------------------
+    def _init_runtime_widgets(self):
         # --- 运行信息
         self.info_stage = QLabel("无")
         self.info_frame = QLabel("0")
@@ -417,6 +465,10 @@ class MainWindow(QWidget):
         self.info_best_conf = QLabel("0.00")
         self.info_best_area = QLabel("0.000")
 
+    # -----------------------------
+    # 模块八：控制按钮
+    # -----------------------------
+    def _init_control_widgets(self):
         # --- 控制按钮
         self.btn_start = QPushButton("开始运行")
         self.btn_stop = QPushButton("停止运行")
@@ -424,7 +476,10 @@ class MainWindow(QWidget):
         self.btn_start.clicked.connect(self.start)
         self.btn_stop.clicked.connect(self.stop)
 
-        # --- 布局
+    # -----------------------------
+    # 模块九：整体布局
+    # -----------------------------
+    def _build_layout(self):
         left = QVBoxLayout()
         left.addWidget(self.video_label)
         left.addWidget(self.status)
@@ -439,6 +494,8 @@ class MainWindow(QWidget):
         form.addRow(QLabel("视频路径："), self.video_path_label)
         form.addRow(self.btn_pick_video)
         form.addRow(QLabel("摄像头选择："), self.cam_select)
+        form.addRow(QLabel("摄像头状态："), self.cam_status_box)
+        form.addRow(self.btn_scan_camera)
 
         form.addRow(QLabel("置信度阈值："), self.conf_th)
         form.addRow(QLabel("报警命中次数："), self.hits_required)
@@ -505,6 +562,69 @@ class MainWindow(QWidget):
         root.addLayout(right, 2)
         self.setLayout(root)
 
+    # -----------------------------
+    # 模块十：摄像头扫描与状态灯
+    # -----------------------------
+    def _scan_cameras_on_startup(self):
+        self.available_cameras = {}
+        self.cam_select.clear()
+        self._clear_camera_status_lights()
+
+        for idx in range(self.camera_scan_range):
+            ok = self._test_camera_index(idx)
+            self.available_cameras[idx] = ok
+            self._add_camera_status_light(idx, ok)
+            cam_text = f"{'🟢' if ok else '🔴'} 摄像头 {idx}"
+            self.cam_select.addItem(cam_text, idx)
+
+        if self.cam_select.count() == 0:
+            self.cam_select.addItem("无可用摄像头", -1)
+            self.status.setText("未扫描到可用摄像头")
+        else:
+            self.status.setText("摄像头扫描完成")
+
+    def _test_camera_index(self, idx: int) -> bool:
+        cap = cv2.VideoCapture(idx)
+        if not cap.isOpened():
+            cap.release()
+            return False
+
+        ok_frame = False
+        for _ in range(3):
+            ok, frame = cap.read()
+            if ok and frame is not None and frame.size > 0:
+                h, w = frame.shape[:2]
+                if h > 0 and w > 0:
+                    ok_frame = True
+                    break
+
+        cap.release()
+        return ok_frame
+
+    def _clear_camera_status_lights(self):
+        while self.cam_status_layout.count():
+            item = self.cam_status_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _add_camera_status_light(self, idx: int, ok: bool):
+        dot = QLabel("●")
+        dot.setStyleSheet(f"color: {'#19c37d' if ok else '#d9534f'}; font-size:16px;")
+        text = QLabel(f"{idx}")
+        text.setStyleSheet("color:#333;")
+        box = QWidget()
+        lay = QHBoxLayout()
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(3)
+        lay.addWidget(dot)
+        lay.addWidget(text)
+        box.setLayout(lay)
+        self.cam_status_layout.addWidget(box)
+
+    # -----------------------------
+    # 通用小模块：横向布局
+    # -----------------------------
     def _hbox(self, *widgets):
         box = QHBoxLayout()
         w = QWidget()
@@ -563,11 +683,18 @@ class MainWindow(QWidget):
             return
 
         if source_mode == "camera":
-            cap_test = cv2.VideoCapture(cam_index)
-            ok = cap_test.isOpened()
-            cap_test.release()
+            if cam_index < 0:
+                QMessageBox.warning(self, "提示", "当前没有可用摄像头，请先重新扫描。")
+                return
+
+            ok = self._test_camera_index(cam_index)
             if not ok:
-                QMessageBox.warning(self, "提示", f"摄像头 {cam_index} 当前打不开，请更换其他摄像头选项。")
+                QMessageBox.warning(
+                    self,
+                    "提示",
+                    f"摄像头 {cam_index} 当前不可用或取帧异常。\n请重新扫描后选择其他可用摄像头。"
+                )
+                self._scan_cameras_on_startup()
                 return
 
         self.worker = VideoWorker(model_path, source_mode, video_path, cam_index, self.rule)
