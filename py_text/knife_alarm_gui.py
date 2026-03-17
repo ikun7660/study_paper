@@ -44,13 +44,256 @@ except Exception:
 from ultralytics import YOLO
 
 # PyQt5
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
-from PyQt5.QtGui import QImage, QPixmap, QIcon
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QRectF, QPointF, QLineF
+from PyQt5.QtGui import QImage, QPixmap, QIcon, QPainter, QColor, QPen, QBrush, QPainterPath
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout,
     QFileDialog, QRadioButton, QButtonGroup, QSpinBox, QDoubleSpinBox,
     QGroupBox, QFormLayout, QMessageBox, QSystemTrayIcon, QComboBox, QGridLayout
 )
+
+
+class TrendChartWidget(QWidget):
+    def __init__(self, max_points=60, y_min=0.0, y_max=1.0, threshold=None, value_suffix="", value_decimals=2, parent=None):
+        super().__init__(parent)
+        self.max_points = max_points
+        self.y_min = y_min
+        self.y_max = y_max
+        self.threshold = threshold
+        self.value_suffix = value_suffix
+        self.value_decimals = value_decimals
+        self.values = deque(maxlen=max_points)
+        self.setMinimumHeight(120)
+
+    def clear(self):
+        self.values.clear()
+        self.update()
+
+    def set_threshold(self, value):
+        self.threshold = value
+        self.update()
+
+    def append_value(self, value):
+        try:
+            v = float(value)
+        except Exception:
+            v = 0.0
+        self.values.append(v)
+        self.update()
+
+    def _effective_ymax(self):
+        if self.y_max is not None:
+            return max(self.y_max, self.y_min + 1e-6)
+        if not self.values:
+            return 1.0
+        current_max = max(self.values)
+        if current_max <= self.y_min:
+            return self.y_min + 1.0
+        return current_max * 1.25
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        rect = self.rect().adjusted(8, 8, -8, -8)
+        painter.fillRect(rect, QColor("#fcfcfc"))
+        painter.setPen(QPen(QColor("#d9d9d9"), 1))
+        painter.drawRect(rect)
+
+        left = rect.left() + 30
+        top = rect.top() + 10
+        right = rect.right() - 10
+        bottom = rect.bottom() - 22
+        plot_rect = QRectF(left, top, max(10, right - left), max(10, bottom - top))
+
+        grid_pen = QPen(QColor("#e8e8e8"), 1)
+        painter.setPen(grid_pen)
+        for i in range(6):
+            y = plot_rect.top() + i * plot_rect.height() / 5.0
+            painter.drawLine(QLineF(plot_rect.left(), y, plot_rect.right(), y))
+        for i in range(7):
+            x = plot_rect.left() + i * plot_rect.width() / 6.0
+            painter.drawLine(QLineF(x, plot_rect.top(), x, plot_rect.bottom()))
+
+        y_min = self.y_min
+        y_max = self._effective_ymax()
+
+        painter.setPen(QPen(QColor("#666666"), 1))
+        painter.drawText(QRectF(plot_rect.left() - 28, plot_rect.top() - 6, 26, 16), Qt.AlignRight | Qt.AlignVCenter, f"{y_max:.1f}" if y_max > 1 else f"{y_max:.2f}")
+        painter.drawText(QRectF(plot_rect.left() - 28, plot_rect.bottom() - 8, 26, 16), Qt.AlignRight | Qt.AlignVCenter, f"{y_min:.1f}" if y_max > 1 else f"{y_min:.2f}")
+
+        if self.threshold is not None:
+            threshold_value = max(y_min, min(self.threshold, y_max))
+            y = plot_rect.bottom() - (threshold_value - y_min) / (y_max - y_min) * plot_rect.height()
+            threshold_pen = QPen(QColor("#d9534f"), 1)
+            threshold_pen.setStyle(Qt.DashLine)
+            painter.setPen(threshold_pen)
+            painter.drawLine(QLineF(plot_rect.left(), y, plot_rect.right(), y))
+
+        if len(self.values) >= 2:
+            points = []
+            count = len(self.values)
+            for i, value in enumerate(self.values):
+                x = plot_rect.left() + i * plot_rect.width() / max(1, count - 1)
+                value = max(y_min, min(value, y_max))
+                y = plot_rect.bottom() - (value - y_min) / (y_max - y_min) * plot_rect.height()
+                points.append(QPointF(x, y))
+
+            fill_path = QPainterPath()
+            fill_path.moveTo(points[0].x(), plot_rect.bottom())
+            for p in points:
+                fill_path.lineTo(p)
+            fill_path.lineTo(points[-1].x(), plot_rect.bottom())
+            fill_path.closeSubpath()
+            painter.fillPath(fill_path, QBrush(QColor(102, 178, 255, 60)))
+
+            line_path = QPainterPath()
+            line_path.moveTo(points[0])
+            for p in points[1:]:
+                line_path.lineTo(p)
+            painter.setPen(QPen(QColor("#4a90e2"), 2))
+            painter.drawPath(line_path)
+
+        elif len(self.values) == 1:
+            value = max(y_min, min(self.values[0], y_max))
+            y = plot_rect.bottom() - (value - y_min) / (y_max - y_min) * plot_rect.height()
+            painter.setPen(QPen(QColor("#4a90e2"), 2))
+            painter.drawLine(QLineF(plot_rect.left(), y, plot_rect.right(), y))
+
+        current_value = self.values[-1] if self.values else 0.0
+        painter.setPen(QPen(QColor("#222222"), 1))
+        if self.value_suffix:
+            text = f"{current_value:.{self.value_decimals}f} {self.value_suffix}"
+        else:
+            text = f"{current_value:.{self.value_decimals}f}"
+        painter.drawText(QRectF(plot_rect.left(), rect.top(), plot_rect.width(), 18), Qt.AlignRight | Qt.AlignVCenter, text)
+
+
+class HitsProgressWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.current_hits = 0
+        self.display_required = 0
+        self.alert_required = 0
+        self.setMinimumHeight(120)
+
+    def clear(self):
+        self.current_hits = 0
+        self.update()
+
+    def set_values(self, current_hits, display_required, alert_required):
+        self.current_hits = int(current_hits)
+        self.display_required = int(display_required)
+        self.alert_required = int(alert_required)
+        self.update()
+
+    def _draw_progress(self, painter, rect, label, current, target, color):
+        painter.setPen(QPen(QColor("#333333"), 1))
+        painter.drawText(QRectF(rect.left(), rect.top() - 22, rect.width(), 18), Qt.AlignLeft | Qt.AlignVCenter, label)
+        painter.setPen(QPen(QColor("#d9d9d9"), 1))
+        painter.setBrush(QBrush(QColor("#f2f2f2")))
+        painter.drawRoundedRect(rect, 6, 6)
+
+        ratio = 0.0
+        if target > 0:
+            ratio = max(0.0, min(float(current) / float(target), 1.0))
+
+        fill_rect = QRectF(rect.left(), rect.top(), rect.width() * ratio, rect.height())
+        painter.setBrush(QBrush(QColor(color)))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(fill_rect, 6, 6)
+
+        painter.setPen(QPen(QColor("#222222"), 1))
+        painter.drawText(rect, Qt.AlignCenter, f"{current} / {target}")
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        rect = self.rect().adjusted(8, 8, -8, -8)
+        painter.fillRect(rect, QColor("#fcfcfc"))
+        painter.setPen(QPen(QColor("#d9d9d9"), 1))
+        painter.drawRect(rect)
+
+        bar_width = rect.width() - 24
+        first_rect = QRectF(rect.left() + 12, rect.top() + 30, bar_width, 24)
+        second_rect = QRectF(rect.left() + 12, rect.top() + 78, bar_width, 24)
+
+        self._draw_progress(
+            painter,
+            first_rect,
+            "显示命中进度",
+            self.current_hits,
+            self.display_required,
+            "#f0ad4e"
+        )
+        self._draw_progress(
+            painter,
+            second_rect,
+            "报警命中进度",
+            self.current_hits,
+            self.alert_required,
+            "#d9534f"
+        )
+
+
+class StageIndicatorWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.stage = "无"
+        self.triggered = 0
+        self.stages = ["无", "候选", "确认", "报警"]
+        self.setMinimumHeight(120)
+
+    def clear(self):
+        self.stage = "无"
+        self.triggered = 0
+        self.update()
+
+    def set_stage_state(self, stage, triggered):
+        self.stage = str(stage)
+        self.triggered = int(triggered)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        rect = self.rect().adjusted(8, 8, -8, -8)
+        painter.fillRect(rect, QColor("#fcfcfc"))
+        painter.setPen(QPen(QColor("#d9d9d9"), 1))
+        painter.drawRect(rect)
+
+        center_y = rect.center().y() - 8
+        left = rect.left() + 32
+        step = max(70, (rect.width() - 64) / max(1, len(self.stages) - 1))
+
+        active_colors = {
+            "无": QColor("#9e9e9e"),
+            "候选": QColor("#f0ad4e"),
+            "确认": QColor("#ff8c42"),
+            "报警": QColor("#d9534f"),
+        }
+
+        painter.setPen(QPen(QColor("#cfcfcf"), 3))
+        if len(self.stages) > 1:
+            painter.drawLine(QLineF(left, center_y, left + step * (len(self.stages) - 1), center_y))
+
+        for i, stage_name in enumerate(self.stages):
+            x = left + step * i
+            is_active = (stage_name == self.stage)
+            color = active_colors.get(stage_name, QColor("#9e9e9e")) if is_active else QColor("#d6d6d6")
+
+            painter.setPen(QPen(QColor("#bcbcbc"), 1))
+            painter.setBrush(QBrush(color))
+            painter.drawEllipse(QPointF(x, center_y), 10, 10)
+
+            painter.setPen(QPen(QColor("#333333"), 1))
+            painter.drawText(QRectF(x - 24, center_y + 16, 48, 18), Qt.AlignCenter, stage_name)
+
+        painter.setPen(QPen(QColor("#222222"), 1))
+        painter.drawText(QRectF(rect.left() + 12, rect.top() + 8, rect.width() - 24, 20), Qt.AlignLeft | Qt.AlignVCenter, f"当前阶段：{self.stage}")
+        painter.drawText(QRectF(rect.left() + 12, rect.bottom() - 22, rect.width() - 24, 18), Qt.AlignLeft | Qt.AlignVCenter, f"报警触发：{self.triggered}")
 
 
 @dataclass
@@ -452,6 +695,11 @@ class MainWindow(QWidget):
         self.info_trigger = QLabel("0")
         self.info_best_conf = QLabel("0.00")
 
+        self.conf_chart = TrendChartWidget(max_points=60, y_min=0.0, y_max=1.0, threshold=self.rule.conf_th, value_suffix="", value_decimals=2)
+        self.infer_chart = TrendChartWidget(max_points=60, y_min=0.0, y_max=None, threshold=None, value_suffix="ms", value_decimals=1)
+        self.hits_progress = HitsProgressWidget()
+        self.stage_indicator = StageIndicatorWidget()
+
     # -----------------------------
     # 模块八：控制按钮
     # -----------------------------
@@ -547,10 +795,42 @@ class MainWindow(QWidget):
         middle.addWidget(param_widget, 1)
         middle.addWidget(info_box, 1)
 
+        visual_box = QGroupBox("运行可视化")
+        visual_grid = QGridLayout()
+        visual_grid.setHorizontalSpacing(10)
+        visual_grid.setVerticalSpacing(10)
+
+        conf_panel = QGroupBox("当前置信度折线图")
+        conf_layout = QVBoxLayout()
+        conf_layout.addWidget(self.conf_chart)
+        conf_panel.setLayout(conf_layout)
+
+        infer_panel = QGroupBox("推理耗时折线图")
+        infer_layout = QVBoxLayout()
+        infer_layout.addWidget(self.infer_chart)
+        infer_panel.setLayout(infer_layout)
+
+        hits_panel = QGroupBox("累计命中进度条")
+        hits_layout = QVBoxLayout()
+        hits_layout.addWidget(self.hits_progress)
+        hits_panel.setLayout(hits_layout)
+
+        stage_panel = QGroupBox("阶段状态灯")
+        stage_layout = QVBoxLayout()
+        stage_layout.addWidget(self.stage_indicator)
+        stage_panel.setLayout(stage_layout)
+
+        visual_grid.addWidget(conf_panel, 0, 0)
+        visual_grid.addWidget(infer_panel, 0, 1)
+        visual_grid.addWidget(hits_panel, 1, 0)
+        visual_grid.addWidget(stage_panel, 1, 1)
+        visual_box.setLayout(visual_grid)
+
         cfg_layout = QVBoxLayout()
         cfg_layout.addLayout(top_form)
         cfg_layout.addLayout(middle)
         cfg_layout.addWidget(self._hbox(self.btn_start, self.btn_stop))
+        cfg_layout.addWidget(visual_box)
         cfg_box.setLayout(cfg_layout)
 
         right = QVBoxLayout()
@@ -598,6 +878,13 @@ class MainWindow(QWidget):
 
         cap.release()
         return ok_frame
+
+    def _reset_visual_widgets(self):
+        self.conf_chart.clear()
+        self.conf_chart.set_threshold(self.rule.conf_th)
+        self.infer_chart.clear()
+        self.hits_progress.set_values(0, self.rule.display_hits_required, self.rule.hits_required)
+        self.stage_indicator.set_stage_state("无", 0)
 
     # -----------------------------
     # 通用小模块：横向布局
@@ -674,6 +961,8 @@ class MainWindow(QWidget):
                 self._scan_cameras_on_startup()
                 return
 
+        self._reset_visual_widgets()
+
         self.worker = VideoWorker(model_path, source_mode, video_path, cam_index, self.rule)
         self.worker.frame_signal.connect(self.on_frame)
         self.worker.status_signal.connect(self.on_status)
@@ -712,6 +1001,18 @@ class MainWindow(QWidget):
         self.info_hits.setText(f'{info.get("hits", 0)} / {info.get("hits_required", 0)}')
         self.info_trigger.setText(str(info.get("triggered", 0)))
         self.info_best_conf.setText(f'{info.get("best_conf", 0.0):.2f}')
+
+        self.conf_chart.append_value(info.get("best_conf", 0.0))
+        self.infer_chart.append_value(info.get("infer_ms", 0.0))
+        self.hits_progress.set_values(
+            info.get("hits", 0),
+            self.rule.display_hits_required,
+            self.rule.hits_required
+        )
+        self.stage_indicator.set_stage_state(
+            info.get("stage", "无"),
+            info.get("triggered", 0)
+        )
 
     def on_notify(self, title: str, msg: str):
         # Windows 托盘通知（不阻塞、自动消失）
