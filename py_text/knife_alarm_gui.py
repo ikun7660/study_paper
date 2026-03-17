@@ -57,7 +57,7 @@ from PyQt5.QtWidgets import (
 class RuleConfig:
     # 规则阈值
     conf_th: float = 0.70          # 置信度阈值（命中阈值）
-    hits_required: int = 15        # 命中需要的 hit 数（连续/累计窗口内）
+    hits_required: int = 5        # 命中需要的 hit 数（连续/累计窗口内）
     hit_window_sec: float = 1.0    # 统计窗口（秒）
     min_area_ratio: float = 0.00   # 最小框面积比例（框面积/图像面积），过滤小噪点框
     cooldown_sec: float = 1.0      # 触发后冷却时间（秒），防止连发
@@ -70,7 +70,7 @@ class RuleConfig:
     max_det: int = 300
 
     # 分级显示
-    display_hits_required: int = 10 # 正式显示命中框所需的 hit 数
+    display_hits_required: int = 2 # 正式显示命中框所需的 hit 数
 
     # 提示
     enable_sound: bool = True
@@ -277,19 +277,14 @@ class VideoWorker(QThread):
 
             self.info_signal.emit({
                 "frame_id": frame_id,
-                "time_sec": t_sec,
                 "fps": fps,
                 "infer_ms": infer_ms,
                 "raw_count": raw_count,
                 "hit_this_frame": hit_this_frame,
                 "hits": hits,
                 "hits_required": self.rule.hits_required,
-                "display_hits_required": self.rule.display_hits_required,
                 "triggered": triggered,
-                "cooldown_left": cooldown_left,
-                "stage": stage,
                 "best_conf": best_conf,
-                "best_area_ratio": best_area_ratio,
             })
 
             # 9) 发给 UI 显示
@@ -326,6 +321,7 @@ class MainWindow(QWidget):
         self._init_rule_widgets()
         self._init_runtime_widgets()
         self._init_control_widgets()
+        self._set_compact_widget_widths()
         self._build_layout()
         self._scan_cameras_on_startup()
 
@@ -385,12 +381,6 @@ class MainWindow(QWidget):
 
         self.btn_scan_camera = QPushButton("重新扫描摄像头")
         self.btn_scan_camera.clicked.connect(self._scan_cameras_on_startup)
-
-        self.cam_status_box = QWidget()
-        self.cam_status_layout = QHBoxLayout()
-        self.cam_status_layout.setContentsMargins(0, 0, 0, 0)
-        self.cam_status_layout.setSpacing(8)
-        self.cam_status_box.setLayout(self.cam_status_layout)
 
     # -----------------------------
     # 模块六：规则参数
@@ -453,17 +443,13 @@ class MainWindow(QWidget):
         # --- 运行信息
         self.info_stage = QLabel("无")
         self.info_frame = QLabel("0")
-        self.info_time = QLabel("0.00 s")
         self.info_fps = QLabel("0.0")
         self.info_infer = QLabel("0.0 ms")
         self.info_raw = QLabel("0")
         self.info_hit = QLabel("0")
         self.info_hits = QLabel("0 / 0")
-        self.info_display_hits = QLabel("0")
         self.info_trigger = QLabel("0")
-        self.info_cooldown = QLabel("0.0 s")
         self.info_best_conf = QLabel("0.00")
-        self.info_best_area = QLabel("0.000")
 
     # -----------------------------
     # 模块八：控制按钮
@@ -477,7 +463,25 @@ class MainWindow(QWidget):
         self.btn_stop.clicked.connect(self.stop)
 
     # -----------------------------
-    # 模块九：整体布局
+    # 模块九：控件宽度
+    # -----------------------------
+    def _set_compact_widget_widths(self):
+        self.btn_pick_video.setFixedWidth(150)
+        self.btn_scan_camera.setFixedWidth(150)
+        self.btn_pick_model.setFixedWidth(220)
+
+        self.cam_select.setFixedWidth(220)
+        self.device_select.setFixedWidth(220)
+
+        for w in [
+            self.conf_th, self.hits_required, self.display_hits_required,
+            self.hit_window_sec, self.min_area_ratio, self.cooldown_sec,
+            self.imgsz, self.iou
+        ]:
+            w.setFixedWidth(220)
+
+    # -----------------------------
+    # 模块十：整体布局
     # -----------------------------
     def _build_layout(self):
         left = QVBoxLayout()
@@ -492,10 +496,8 @@ class MainWindow(QWidget):
 
         form.addRow(QLabel("输入源："), self._hbox(self.rb_video, self.rb_cam))
         form.addRow(QLabel("视频路径："), self.video_path_label)
-        form.addRow(self.btn_pick_video)
+        form.addRow(QLabel("操作："), self._hbox(self.btn_pick_video, self.btn_scan_camera))
         form.addRow(QLabel("摄像头选择："), self.cam_select)
-        form.addRow(QLabel("摄像头状态："), self.cam_status_box)
-        form.addRow(self.btn_scan_camera)
 
         form.addRow(QLabel("置信度阈值："), self.conf_th)
         form.addRow(QLabel("报警命中次数："), self.hits_required)
@@ -514,7 +516,7 @@ class MainWindow(QWidget):
 
         info_box = QGroupBox("运行信息")
         info_grid = QGridLayout()
-        info_grid.setHorizontalSpacing(18)
+        info_grid.setHorizontalSpacing(16)
         info_grid.setVerticalSpacing(6)
 
         info_grid.addWidget(QLabel("阶段："), 0, 0)
@@ -524,31 +526,21 @@ class MainWindow(QWidget):
 
         info_grid.addWidget(QLabel("当前帧："), 1, 0)
         info_grid.addWidget(self.info_frame, 1, 1)
-        info_grid.addWidget(QLabel("视频时间："), 1, 2)
-        info_grid.addWidget(self.info_time, 1, 3)
+        info_grid.addWidget(QLabel("FPS："), 1, 2)
+        info_grid.addWidget(self.info_fps, 1, 3)
 
-        info_grid.addWidget(QLabel("FPS："), 2, 0)
-        info_grid.addWidget(self.info_fps, 2, 1)
-        info_grid.addWidget(QLabel("推理耗时："), 2, 2)
-        info_grid.addWidget(self.info_infer, 2, 3)
+        info_grid.addWidget(QLabel("推理耗时："), 2, 0)
+        info_grid.addWidget(self.info_infer, 2, 1)
+        info_grid.addWidget(QLabel("本帧命中："), 2, 2)
+        info_grid.addWidget(self.info_hit, 2, 3)
 
-        info_grid.addWidget(QLabel("本帧命中："), 3, 0)
-        info_grid.addWidget(self.info_hit, 3, 1)
-        info_grid.addWidget(QLabel("累计命中："), 3, 2)
-        info_grid.addWidget(self.info_hits, 3, 3)
+        info_grid.addWidget(QLabel("累计命中："), 3, 0)
+        info_grid.addWidget(self.info_hits, 3, 1)
+        info_grid.addWidget(QLabel("报警触发："), 3, 2)
+        info_grid.addWidget(self.info_trigger, 3, 3)
 
-        info_grid.addWidget(QLabel("显示阈值："), 4, 0)
-        info_grid.addWidget(self.info_display_hits, 4, 1)
-        info_grid.addWidget(QLabel("报警触发："), 4, 2)
-        info_grid.addWidget(self.info_trigger, 4, 3)
-
-        info_grid.addWidget(QLabel("冷却剩余："), 5, 0)
-        info_grid.addWidget(self.info_cooldown, 5, 1)
-        info_grid.addWidget(QLabel("当前置信度："), 5, 2)
-        info_grid.addWidget(self.info_best_conf, 5, 3)
-
-        info_grid.addWidget(QLabel("当前面积占比："), 6, 0)
-        info_grid.addWidget(self.info_best_area, 6, 1)
+        info_grid.addWidget(QLabel("当前置信度："), 4, 0)
+        info_grid.addWidget(self.info_best_conf, 4, 1)
 
         info_box.setLayout(info_grid)
 
@@ -563,17 +555,15 @@ class MainWindow(QWidget):
         self.setLayout(root)
 
     # -----------------------------
-    # 模块十：摄像头扫描与状态灯
+    # 模块十一：摄像头扫描与状态灯
     # -----------------------------
     def _scan_cameras_on_startup(self):
         self.available_cameras = {}
         self.cam_select.clear()
-        self._clear_camera_status_lights()
 
         for idx in range(self.camera_scan_range):
             ok = self._test_camera_index(idx)
             self.available_cameras[idx] = ok
-            self._add_camera_status_light(idx, ok)
             cam_text = f"{'🟢' if ok else '🔴'} 摄像头 {idx}"
             self.cam_select.addItem(cam_text, idx)
 
@@ -600,27 +590,6 @@ class MainWindow(QWidget):
 
         cap.release()
         return ok_frame
-
-    def _clear_camera_status_lights(self):
-        while self.cam_status_layout.count():
-            item = self.cam_status_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-
-    def _add_camera_status_light(self, idx: int, ok: bool):
-        dot = QLabel("●")
-        dot.setStyleSheet(f"color: {'#19c37d' if ok else '#d9534f'}; font-size:16px;")
-        text = QLabel(f"{idx}")
-        text.setStyleSheet("color:#333;")
-        box = QWidget()
-        lay = QHBoxLayout()
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(3)
-        lay.addWidget(dot)
-        lay.addWidget(text)
-        box.setLayout(lay)
-        self.cam_status_layout.addWidget(box)
 
     # -----------------------------
     # 通用小模块：横向布局
@@ -728,17 +697,13 @@ class MainWindow(QWidget):
     def on_info(self, info: dict):
         self.info_stage.setText(str(info.get("stage", "无")))
         self.info_frame.setText(str(info.get("frame_id", 0)))
-        self.info_time.setText(f'{info.get("time_sec", 0.0):.2f} s')
         self.info_fps.setText(f'{info.get("fps", 0.0):.1f}')
         self.info_infer.setText(f'{info.get("infer_ms", 0.0):.1f} ms')
         self.info_raw.setText(str(info.get("raw_count", 0)))
         self.info_hit.setText(str(info.get("hit_this_frame", 0)))
         self.info_hits.setText(f'{info.get("hits", 0)} / {info.get("hits_required", 0)}')
-        self.info_display_hits.setText(str(info.get("display_hits_required", 0)))
         self.info_trigger.setText(str(info.get("triggered", 0)))
-        self.info_cooldown.setText(f'{info.get("cooldown_left", 0.0):.1f} s')
         self.info_best_conf.setText(f'{info.get("best_conf", 0.0):.2f}')
-        self.info_best_area.setText(f'{info.get("best_area_ratio", 0.0):.3f}')
 
     def on_notify(self, title: str, msg: str):
         # Windows 托盘通知（不阻塞、自动消失）
