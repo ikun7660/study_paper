@@ -21,14 +21,14 @@ from collections import deque
 
 import cv2
 
-# -----------------------------
-# 路线A：你可以在这里手动写死路径（方式1）
-# -----------------------------
+
+# 默认路径
+
 DEFAULT_MODEL_PATH = r"E:\User\ultralytics-8.3.241\runs\detect\yolov8m_150_no_copy_paste\weights\best.pt"
 DEFAULT_VIDEO_PATH = r"E:\User\ultralytics-8.3.241\video\video_1.mp4"
 DEFAULT_LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 
-# Windows 提示音（非阻塞）
+# Windows 提示音
 try:
     import winsound
     HAS_WINSOUND = True
@@ -52,11 +52,13 @@ from PyQt5.QtWidgets import (
     QFileDialog, QRadioButton, QButtonGroup, QSpinBox, QDoubleSpinBox,
     QGroupBox, QFormLayout, QMessageBox, QSystemTrayIcon, QComboBox, QGridLayout
 )
-
+# 日志模块
 from log_system import LogManager, LogViewerDialog
 
 
+# 趋势图控件：用于绘制最近一段时间内的数值变化，如置信度和推理耗时。
 class TrendChartWidget(QWidget):
+    # 初始化图表范围、阈值和缓存队列。
     def __init__(self, max_points=60, y_min=0.0, y_max=1.0, threshold=None, value_suffix="", value_decimals=2, parent=None):
         super().__init__(parent)
         self.max_points = max_points
@@ -68,14 +70,17 @@ class TrendChartWidget(QWidget):
         self.values = deque(maxlen=max_points)
         self.setMinimumHeight(110)
 
+    # 清空当前曲线缓存，并立即刷新界面。
     def clear(self):
         self.values.clear()
         self.update()
 
+    # 更新阈值线位置，供界面实时显示当前规则门槛。
     def set_threshold(self, value):
         self.threshold = value
         self.update()
 
+    # 追加一个新采样点，超出容量后自动丢弃最旧数据。
     def append_value(self, value):
         try:
             v = float(value)
@@ -84,6 +89,7 @@ class TrendChartWidget(QWidget):
         self.values.append(v)
         self.update()
 
+    # 计算纵轴上限；若未固定上限，则根据当前数据自适应。
     def _effective_ymax(self):
         if self.y_max is not None:
             return max(self.y_max, self.y_min + 1e-6)
@@ -94,6 +100,7 @@ class TrendChartWidget(QWidget):
             return self.y_min + 1.0
         return current_max * 1.25
 
+    # 自定义绘制曲线、网格、阈值线和当前值文本。
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -178,7 +185,9 @@ class TrendChartWidget(QWidget):
         painter.drawText(QRectF(plot_rect.left(), rect.top(), plot_rect.width(), 16), Qt.AlignRight | Qt.AlignVCenter, text)
 
 
+# 命中进度控件：分别显示“显示命中”和“报警命中”的累计进度。
 class HitsProgressWidget(QWidget):
+    # 初始化当前命中数与两个目标阈值。
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_hits = 0
@@ -186,16 +195,19 @@ class HitsProgressWidget(QWidget):
         self.alert_required = 0
         self.setMinimumHeight(100)
 
+    # 复位进度条状态。
     def clear(self):
         self.current_hits = 0
         self.update()
 
+    # 更新当前命中值和两个阶段的目标值。
     def set_values(self, current_hits, display_required, alert_required):
         self.current_hits = int(current_hits)
         self.display_required = int(display_required)
         self.alert_required = int(alert_required)
         self.update()
 
+    # 绘制单条进度条及其右侧数值。
     def _draw_progress(self, painter, rect, label, current, target, color):
         painter.setPen(QPen(QColor("#333333"), 1))
         painter.drawText(QRectF(rect.left(), rect.top() - 18, rect.width(), 16), Qt.AlignLeft | Qt.AlignVCenter, label)
@@ -215,6 +227,7 @@ class HitsProgressWidget(QWidget):
         painter.setPen(QPen(QColor("#222222"), 1))
         painter.drawText(QRectF(rect.left(), rect.top(), rect.width() - 8, rect.height()), Qt.AlignRight | Qt.AlignVCenter, f"{current} / {target}")
 
+    # 绘制两个阶段对应的命中进度条。
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -250,7 +263,9 @@ class HitsProgressWidget(QWidget):
         )
 
 
+# 阶段指示控件：展示“无/候选/确认/报警”四个运行阶段。
 class StageIndicatorWidget(QWidget):
+    # 初始化阶段名称与报警次数显示。
     def __init__(self, parent=None):
         super().__init__(parent)
         self.stage = "无"
@@ -258,16 +273,19 @@ class StageIndicatorWidget(QWidget):
         self.stages = ["无", "候选", "确认", "报警"]
         self.setMinimumHeight(110)
 
+    # 复位阶段显示。
     def clear(self):
         self.stage = "无"
         self.triggered = 0
         self.update()
 
+    # 更新当前阶段与累计报警次数。
     def set_stage_state(self, stage, triggered):
         self.stage = str(stage)
         self.triggered = int(triggered)
         self.update()
 
+    # 按阶段绘制状态圆点、连线与文字信息。
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -318,6 +336,7 @@ class StageIndicatorWidget(QWidget):
 
 
 @dataclass
+# 规则配置数据类：统一保存判定规则、推理参数和提示选项。
 class RuleConfig:
     # 规则阈值
     conf_th: float = 0.70          # 置信度阈值（命中阈值）
@@ -341,6 +360,7 @@ class RuleConfig:
     enable_notify: bool = True
 
 
+# 工作线程：负责视频读取、模型推理、规则判定和信号回传，避免阻塞主界面。
 class VideoWorker(QThread):
     frame_signal = pyqtSignal(QImage)          # 给界面显示
     status_signal = pyqtSignal(str)            # 状态栏
@@ -351,6 +371,7 @@ class VideoWorker(QThread):
     system_log_signal = pyqtSignal(str, str)
     event_log_signal = pyqtSignal(dict)
 
+    # 保存模型路径、输入源信息和规则配置，并初始化运行期统计变量。
     def __init__(self, model_path: str, source_mode: str, video_path: str, cam_index: int, rule: RuleConfig):
         super().__init__()
         self.model_path = model_path
@@ -371,9 +392,11 @@ class VideoWorker(QThread):
         self.infer_max_ms = 0.0
         self.run_start_time = ""
 
+    # 对外提供停止标记，供主线程安全结束检测循环。
     def stop(self):
         self._stop_flag = True
 
+    # 异步播放系统提示音，避免报警时阻塞检测线程。
     def _play_sound_non_block(self):
         if not self.rule.enable_sound:
             return
@@ -385,9 +408,11 @@ class VideoWorker(QThread):
         except Exception:
             pass
 
+    # 判断当前时刻是否仍处于冷却期内。
     def _within_cooldown(self, now: float) -> bool:
         return (now - self.last_trigger_time) < self.rule.cooldown_sec
 
+    # 写入一次命中时间，并移除统计窗口之外的旧命中。
     def _push_hit(self, now: float):
         # 记录一次 hit
         self.hit_times.append(now)
@@ -396,12 +421,14 @@ class VideoWorker(QThread):
         while self.hit_times and (now - self.hit_times[0]) > window:
             self.hit_times.popleft()
 
+    # 返回当前统计窗口内的有效命中次数。
     def _hit_count(self, now: float) -> int:
         window = self.rule.hit_window_sec
         while self.hit_times and (now - self.hit_times[0]) > window:
             self.hit_times.popleft()
         return len(self.hit_times)
 
+    # 线程主流程：加载模型、打开输入源、逐帧推理、规则判定、可视化并发送结果到界面。
     def run(self):
         self.run_start_time = time.strftime("%Y-%m-%d %H:%M:%S")
         # 1) 加载模型
@@ -421,8 +448,7 @@ class VideoWorker(QThread):
             self.stopped_signal.emit()
             self.finished_signal.emit()
             return
-
-        # 2) 打开视频源
+                # 2) 打开视频源
         if self.source_mode == "video":
             cap = cv2.VideoCapture(self.video_path)
             if not cap.isOpened():
@@ -638,7 +664,9 @@ class VideoWorker(QThread):
         })
 
 
+# 主窗口：负责界面搭建、参数收集、线程控制以及日志查看。
 class MainWindow(QWidget):
+    # 初始化规则、日志模块、托盘和所有界面子模块。
     def __init__(self):
         super().__init__()
         self.setWindowTitle("刀具检测预警系统")
@@ -679,6 +707,7 @@ class MainWindow(QWidget):
     # -----------------------------
     # 模块一：托盘通知
     # -----------------------------
+    # 初始化系统托盘图标，用于弹出非阻塞通知。
     def _init_tray(self):
         # --- 托盘通知（Windows 风格，不阻塞，自动消失）
         self.tray = QSystemTrayIcon(self)
@@ -688,6 +717,7 @@ class MainWindow(QWidget):
     # -----------------------------
     # 模块二：视频显示区域
     # -----------------------------
+    # 初始化视频显示区域。
     def _init_video_area(self):
         # --- 画面显示
         self.video_label = QLabel("点击开始后显示画面")
@@ -698,6 +728,7 @@ class MainWindow(QWidget):
     # -----------------------------
     # 模块三：状态栏
     # -----------------------------
+    # 初始化底部状态文本。
     def _init_status_area(self):
         # --- 状态
         self.status = QLabel("就绪")
@@ -706,6 +737,7 @@ class MainWindow(QWidget):
     # -----------------------------
     # 模块四：路径选择
     # -----------------------------
+    # 初始化模型路径、视频路径和日志目录相关控件。
     def _init_path_widgets(self):
         # --- 模型路径（方式2：界面选择）
         self.model_path_label = QLabel(DEFAULT_MODEL_PATH)
@@ -723,6 +755,7 @@ class MainWindow(QWidget):
     # -----------------------------
     # 模块五：输入源选择
     # -----------------------------
+    # 初始化输入源选择控件，包括视频文件和摄像头。
     def _init_source_widgets(self):
         # --- 输入源选择
         self.rb_video = QRadioButton("视频文件")
@@ -740,6 +773,7 @@ class MainWindow(QWidget):
     # -----------------------------
     # 模块六：规则参数
     # -----------------------------
+    # 初始化规则参数与推理参数控件。
     def _init_rule_widgets(self):
         # --- 规则参数
         self.conf_th = QDoubleSpinBox()
@@ -794,6 +828,7 @@ class MainWindow(QWidget):
     # -----------------------------
     # 模块七：运行信息
     # -----------------------------
+    # 初始化运行信息显示控件，包括曲线图、进度条和阶段指示。
     def _init_runtime_widgets(self):
         # --- 运行信息
         self.info_frame = QLabel("0")
@@ -812,6 +847,7 @@ class MainWindow(QWidget):
     # -----------------------------
     # 模块八：控制按钮
     # -----------------------------
+    # 初始化开始、停止和查看日志按钮。
     def _init_control_widgets(self):
         # --- 控制按钮
         self.btn_start = QPushButton("开始运行")
@@ -825,6 +861,7 @@ class MainWindow(QWidget):
     # -----------------------------
     # 模块九：控件宽度
     # -----------------------------
+    # 统一设置常用输入控件的宽度，保持界面布局整齐。
     def _set_compact_widget_widths(self):
         self.btn_pick_video.setFixedWidth(150)
         self.btn_scan_camera.setFixedWidth(150)
@@ -845,6 +882,7 @@ class MainWindow(QWidget):
     # -----------------------------
     # 模块十：整体布局
     # -----------------------------
+    # 组装主界面布局，将左侧视频区与右侧控制面板组合在一起。
     def _build_layout(self):
         left = QVBoxLayout()
         left.addWidget(self.video_label)
@@ -955,6 +993,7 @@ class MainWindow(QWidget):
     # -----------------------------
     # 模块十一：摄像头扫描与状态灯
     # -----------------------------
+    # 扫描可用摄像头并刷新下拉列表。
     def _scan_cameras_on_startup(self):
         self.available_cameras = {}
         self.cam_select.clear()
@@ -976,6 +1015,7 @@ class MainWindow(QWidget):
             self.status.setText("摄像头扫描完成")
             self.log_manager.info(f"摄像头扫描完成，可用摄像头：{', '.join(available_list) if available_list else '无'}")
 
+    # 测试指定摄像头索引是否可正常打开。
     def _test_camera_index(self, idx: int) -> bool:
         cap = cv2.VideoCapture(idx)
         if not cap.isOpened():
@@ -994,6 +1034,7 @@ class MainWindow(QWidget):
         cap.release()
         return ok_frame
 
+    # 清空运行期的图表、阶段和进度显示。
     def _reset_visual_widgets(self):
         self.conf_chart.clear()
         self.conf_chart.set_threshold(self.rule.conf_th)
@@ -1004,6 +1045,7 @@ class MainWindow(QWidget):
     # -----------------------------
     # 通用小模块：横向布局
     # -----------------------------
+    # 快速生成横向布局，减少重复布局代码。
     def _hbox(self, *widgets):
         box = QHBoxLayout()
         w = QWidget()
@@ -1012,18 +1054,21 @@ class MainWindow(QWidget):
         w.setLayout(box)
         return w
 
+    # 选择模型文件并更新界面显示。
     def pick_model(self):
         path, _ = QFileDialog.getOpenFileName(self, "选择模型文件", os.path.dirname(DEFAULT_MODEL_PATH), "PyTorch (*.pt)")
         if path:
             self.model_path_label.setText(path)
             self.log_manager.info(f"选择模型文件：{path}")
 
+    # 选择视频文件并更新界面显示。
     def pick_video(self):
         path, _ = QFileDialog.getOpenFileName(self, "选择视频文件", os.path.dirname(DEFAULT_VIDEO_PATH), "Video (*.mp4 *.avi *.mkv *.mov)")
         if path:
             self.video_path_label.setText(path)
             self.log_manager.info(f"选择视频文件：{path}")
 
+    # 选择日志保存目录，并同步更新日志管理器。
     def pick_log_dir(self):
         path = QFileDialog.getExistingDirectory(self, "选择日志保存目录", self.log_dir)
         if path:
@@ -1032,11 +1077,13 @@ class MainWindow(QWidget):
             self.log_manager.set_log_dir(path)
             self.log_manager.info(f"日志目录已设置为：{path}")
 
+    # 打开日志查看窗口。
     def show_log_viewer(self):
         self.log_viewer.show()
         self.log_viewer.raise_()
         self.log_viewer.activateWindow()
 
+    # 重置一次运行过程中的统计量。
     def _reset_run_stats(self):
         self.run_start_time = time.strftime("%Y-%m-%d %H:%M:%S")
         self.run_stats = {
@@ -1047,6 +1094,7 @@ class MainWindow(QWidget):
             "total_triggers": 0
         }
 
+    # 收集界面参数，创建日志文件和工作线程，并启动检测。
     def start(self):
         if self.worker is not None:
             return
@@ -1135,6 +1183,7 @@ class MainWindow(QWidget):
             self.status.setText("启动中... 当前设备：CPU")
         self.worker.start()
 
+    # 请求停止当前检测线程。
     def stop(self):
         if self.worker:
             self.worker.stop()
@@ -1142,14 +1191,17 @@ class MainWindow(QWidget):
             self.status.setText("停止中...")
             self.log_manager.info("收到停止请求")
 
+    # 接收线程传来的图像帧并更新显示。
     def on_frame(self, qimg: QImage):
         # 自适应缩放
         pix = QPixmap.fromImage(qimg)
         self.video_label.setPixmap(pix.scaled(self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
+    # 更新底部状态文本。
     def on_status(self, s: str):
         self.status.setText(s)
 
+    # 将系统日志写入日志模块。
     def on_system_log(self, level: str, message: str):
         if level == "INFO":
             self.log_manager.info(message)
@@ -1160,9 +1212,11 @@ class MainWindow(QWidget):
         else:
             self.log_manager.log(level, message)
 
+    # 将事件日志写入事件 CSV。
     def on_event_log(self, row: dict):
         self.log_manager.event(row)
 
+    # 接收线程运行信息并刷新统计面板。
     def on_info(self, info: dict):
         self.info_frame.setText(str(info.get("frame_id", 0)))
         self.info_fps.setText(f'{info.get("fps", 0.0):.1f}')
@@ -1187,6 +1241,7 @@ class MainWindow(QWidget):
         self.run_stats["total_hits"] += int(info.get("hit_this_frame", 0))
         self.run_stats["total_triggers"] += int(info.get("triggered", 0))
 
+    # 通过托盘气泡显示报警通知。
     def on_notify(self, title: str, msg: str):
         # Windows 托盘通知（不阻塞、自动消失）
         try:
@@ -1194,9 +1249,11 @@ class MainWindow(QWidget):
         except Exception:
             pass
 
+    # 线程停止后恢复按钮状态。
     def on_stopped(self):
         pass
 
+    # 在线程自然结束时写入本次运行汇总信息。
     def on_worker_finished(self):
         model_path = self.model_path_label.text().strip()
         source_mode = "video" if self.rb_video.isChecked() else "camera"
@@ -1238,6 +1295,7 @@ class MainWindow(QWidget):
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
 
+    # 窗口关闭时，确保线程与日志写入线程被正确结束。
     def closeEvent(self, event):
         try:
             if self.worker:
@@ -1250,6 +1308,7 @@ class MainWindow(QWidget):
         event.accept()
 
 
+# 程序入口：创建 QApplication 与主窗口并进入事件循环。
 def main():
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon())  # 你也可以换成自己的 ico
