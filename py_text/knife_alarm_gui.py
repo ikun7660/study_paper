@@ -547,7 +547,8 @@ class VideoWorker(QThread):
                 if self.rule.enable_notify:
                     self.notify_signal.emit(
                         "刀具预警",
-                        f"规则命中：conf≥{self.rule.conf_th:.2f}，命中次数={hits}/{self.rule.hits_required}，面积≥{self.rule.min_area_ratio:.3f}"
+                        f"规则命中：conf≥{self.rule.conf_th:.2f}，命中次数={hits}/{self.rule.hits_required}，"
+                        "面积≥{self.rule.min_area_ratio:.3f}"
                     )
                 self._play_sound_non_block()
 
@@ -555,7 +556,7 @@ class VideoWorker(QThread):
             display_confirmed = display_candidate and (hits >= self.rule.display_hits_required)
             display_alert = display_confirmed and (triggered == 1 or self._within_cooldown(now))
 
-            # 7) 可视化：只画“命中框”
+            # 可视化：只画“命中框”
             vis = frame.copy()
 
             if best is not None:
