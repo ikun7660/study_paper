@@ -504,8 +504,9 @@ class VideoWorker(QThread):
             if infer_ms > self.infer_max_ms:
                 self.infer_max_ms = infer_ms
 
-            # 从结果里找“本帧最可信的候选框”
-            best = None  # (conf, xyxy, cls)
+            # 收集“本帧所有有效框”，同时保留一个最优框用于统计显示
+            valid_boxes = []   # [(conf, (x1, y1, x2, y2), cls, area_ratio), ...]
+            best = None
             raw_count = 0
 
             r0 = results[0]
@@ -523,13 +524,16 @@ class VideoWorker(QThread):
                     if area_ratio < self.rule.min_area_ratio:
                         continue
 
+                    item = (conf, (x1, y1, x2, y2), cls, area_ratio)
+                    valid_boxes.append(item)
+
                     if best is None or conf > best[0]:
-                        best = (conf, (x1, y1, x2, y2), cls, area_ratio)
+                        best = item
 
             now = time.time()
 
-            # 规则判定：本帧是否 hit
-            hit_this_frame = 1 if best is not None else 0
+           # 规则判定：这一帧只要存在至少一个有效框，就记 1 次 hit
+            hit_this_frame = 1 if len(valid_boxes) > 0 else 0
             if hit_this_frame:
                 self._push_hit(now)
                 self.total_hits += 1
@@ -552,18 +556,17 @@ class VideoWorker(QThread):
                     )
                 self._play_sound_non_block()
 
-            display_candidate = best is not None
+            display_candidate = len(valid_boxes) > 0
             display_confirmed = display_candidate and (hits >= self.rule.display_hits_required)
             display_alert = display_confirmed and (triggered == 1 or self._within_cooldown(now))
 
-            # 可视化：只画“命中框”
+            # 可视化：画“所有有效框”，但报警仍按整帧单次判定
             vis = frame.copy()
 
-            if best is not None:
-                conf, (x1, y1, x2, y2), cls, area_ratio = best
+            for item in valid_boxes:
+                conf, (x1, y1, x2, y2), cls, area_ratio = item
                 x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
 
-                # 命中框
                 if display_alert:
                     cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 0, 255), 3)
                 elif display_confirmed:
@@ -628,6 +631,7 @@ class VideoWorker(QThread):
                 "fps": fps,
                 "infer_ms": infer_ms,
                 "raw_count": raw_count,
+                "valid_count": len(valid_boxes),
                 "hit_this_frame": hit_this_frame,
                 "hits": hits,
                 "hits_required": self.rule.hits_required,
