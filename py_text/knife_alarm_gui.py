@@ -907,7 +907,7 @@ class MainWindow(QWidget):
 
         info_grid.addWidget(QLabel("原始框数："), 1, 0)
         info_grid.addWidget(self.info_raw, 1, 1)
-        info_grid.addWidget(QLabel("本帧命中："), 1, 2)
+        info_grid.addWidget(QLabel("有效框数："), 1, 2)
         info_grid.addWidget(self.info_hit, 1, 3)
 
         info_box.setLayout(info_grid)
@@ -1198,7 +1198,7 @@ class MainWindow(QWidget):
         self.info_frame.setText(str(info.get("frame_id", 0)))
         self.info_fps.setText(f'{info.get("fps", 0.0):.1f}')
         self.info_raw.setText(str(info.get("raw_count", 0)))
-        self.info_hit.setText(str(info.get("hit_this_frame", 0)))
+        self.info_hit.setText(str(info.get("valid_count", 0)))
 
         self.conf_chart.append_value(info.get("best_conf", 0.0))
         self.infer_chart.append_value(info.get("infer_ms", 0.0))
