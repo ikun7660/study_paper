@@ -370,7 +370,7 @@ class VideoWorker(QThread):
     finished_signal = pyqtSignal()
     system_log_signal = pyqtSignal(str, str)
     event_log_signal = pyqtSignal(dict)
-
+    
     # 保存模型路径、输入源信息和规则配置，并初始化运行期统计变量。
     def __init__(self, model_path: str, source_mode: str, video_path: str, cam_index: int, rule: RuleConfig):
         super().__init__()
@@ -381,6 +381,7 @@ class VideoWorker(QThread):
         self.rule = rule
 
         self._stop_flag = False
+        self._pause_flag = False
 
         # hits 统计：保存最近窗口内的 hit 时间戳
         self.hit_times = deque()
@@ -391,6 +392,13 @@ class VideoWorker(QThread):
         self.infer_sum_ms = 0.0
         self.infer_max_ms = 0.0
         self.run_start_time = ""
+
+    # 视频暂停开始按钮事件
+    def pause(self):
+        self._pause_flag = True
+
+    def resume(self):
+        self._pause_flag = False
 
     # 对外提供停止标记，供主线程安全结束检测循环。
     def stop(self):
@@ -475,6 +483,10 @@ class VideoWorker(QThread):
         t0 = time.time()
 
         while not self._stop_flag:
+            if self._pause_flag:
+                self.status_signal.emit("已暂停")
+                self.msleep(100)
+                continue
             ok, frame = cap.read()
             if not ok:
                 break
@@ -691,6 +703,7 @@ class MainWindow(QWidget):
             "total_hits": 0,
             "total_triggers": 0
         }
+        self.is_paused = False
 
         # 初始化界面模块
         self._init_tray()
@@ -701,11 +714,40 @@ class MainWindow(QWidget):
         self._init_rule_widgets()
         self._init_runtime_widgets()
         self._init_control_widgets()
+
+        self.rb_video.toggled.connect(self.update_pause_button_state)
+        self.rb_cam.toggled.connect(self.update_pause_button_state) 
+
         self._set_compact_widget_widths()
         self._build_layout()
         self._scan_cameras_on_startup()
+        
 
         self.log_manager.info("程序启动完成")
+
+    def update_pause_button_state(self):
+        self.btn_pause.setEnabled(self.rb_video.isChecked() and self.worker is not None)
+
+    def toggle_pause(self):
+        if self.worker is None:
+            return
+
+        # 只有视频源允许暂停
+        if not self.rb_video.isChecked():
+            return
+
+        if not self.is_paused:
+            self.worker.pause()
+            self.is_paused = True
+            self.btn_pause.setText("继续播放")
+            self.status.setText("已暂停")
+            self.log_manager.info("视频已暂停")
+        else:
+            self.worker.resume()
+            self.is_paused = False
+            self.btn_pause.setText("暂停运行")
+            self.status.setText("运行中")
+            self.log_manager.info("视频继续播放")
 
     # 托盘通知
     def _init_tray(self):
@@ -840,6 +882,10 @@ class MainWindow(QWidget):
         self.btn_stop.clicked.connect(self.stop)
         self.btn_view_log.clicked.connect(self.show_log_viewer)
 
+        self.btn_pause = QPushButton("暂停运行")
+        self.btn_pause.setEnabled(False)
+        self.btn_pause.clicked.connect(self.toggle_pause)
+
 
     # 控件宽度
 
@@ -957,7 +1003,7 @@ class MainWindow(QWidget):
         cfg_layout = QVBoxLayout()
         cfg_layout.addLayout(top_form)
         cfg_layout.addLayout(middle)
-        cfg_layout.addWidget(self._hbox(self.btn_start, self.btn_stop, self.btn_view_log))
+        cfg_layout.addWidget(self._hbox(self.btn_start, self.btn_stop, self.btn_pause, self.btn_view_log))
         cfg_layout.addWidget(visual_box)
         cfg_box.setLayout(cfg_layout)
 
@@ -1158,6 +1204,11 @@ class MainWindow(QWidget):
             self.status.setText("启动中... 当前设备：GPU (device=0)")
         else:
             self.status.setText("启动中... 当前设备：CPU")
+
+        self.is_paused = False
+        self.btn_pause.setText("暂停运行")
+        self.btn_pause.setEnabled(source_mode == "video")
+
         self.worker.start()
 
     # 请求停止当前检测线程。
@@ -1231,6 +1282,10 @@ class MainWindow(QWidget):
 
     # 在线程自然结束时写入本次运行汇总信息。
     def on_worker_finished(self):
+        self.is_paused = False
+        self.btn_pause.setText("暂停运行")
+        self.btn_pause.setEnabled(False)
+
         model_path = self.model_path_label.text().strip()
         source_mode = "video" if self.rb_video.isChecked() else "camera"
         video_path = self.video_path_label.text().strip()
