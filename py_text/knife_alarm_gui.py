@@ -339,7 +339,7 @@ class StageIndicatorWidget(QWidget):
 # 规则配置数据类：统一保存判定规则、推理参数和提示选项。
 class RuleConfig:
     # 规则阈值
-    conf_th: float = 0.70          # 置信度阈值
+    conf_th: float = 0.50          # 置信度阈值
     hits_required: int = 15        # 命中需要的 hit 数
     hit_window_sec: float = 1.0    # 统计窗口（秒）
     min_area_ratio: float = 0.00   # 最小框面积比例（框面积/图像面积）
